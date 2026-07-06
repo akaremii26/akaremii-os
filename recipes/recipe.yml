@@ -17,6 +17,13 @@ modules:
       - source: system
         destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
 
+  - type: script
+    snippets:
+      - |
+        curl -sL -o /tmp/apple-emoji.rpm https://github.com/samuelngs/apple-emoji-ttf/releases/download/macos-26-20260613-f1fc560b/fonts-apple-color-emoji.rpm
+        dnf install -y /tmp/apple-emoji.rpm
+        rm -f /tmp/apple-emoji.rpm
+
   - type: dnf
     repos:
       copr:
@@ -49,5 +56,16 @@ modules:
           - org.mozilla.firefox
           - org.gnome.Loupe
       - scope: user # Also add Flathub user repo, but no user packages
+
+  - type: os-release
+    properties:
+      NAME: "Akaremii OS"
+      ID: "akaremii-os"
+      ID_LIKE: "fedora"
+      PRETTY_NAME: "Akaremii OS"
+      HOME_URL: "https://github.com/akaremii26/akaremii-os"
+      DOCUMENTATION_URL: "https://github.com/akaremii26/akaremii-os"
+      SUPPORT_URL: "https://github.com/akaremii26/akaremii-os"
+      BUG_REPORT_URL: "https://github.com/akaremii26/akaremii-os/issues/"
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully

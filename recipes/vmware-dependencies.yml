@@ -5,14 +5,13 @@ install:
   packages:
     # VMware Workstation runtime dependencies
     - dkms
-    - fuse2
-    - gtkmm3
+    - fuse-libs
+    - gtkmm3.0
     - libcanberra
     - libaio
-    - pcsclite
+    - pcsc-lite
     - hicolor-icon-theme
     - libxcrypt-compat
-    - libxml2-legacy
     - gtk3
     - gcr
     # Additional build dependencies for kernel modules

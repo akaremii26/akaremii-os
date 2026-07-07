@@ -60,7 +60,9 @@ modules:
             BUNDLE="VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64.bundle" && \
             BUNDLE_URL="https://archive.org/download/VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64/${BUNDLE}" && \
             KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
-            dnf install -y kernel-devel-${KVER} kernel-headers-${KVER} gcc make patch elfutils-libelf-devel && \
+            dnf install -y gcc make patch elfutils-libelf-devel && \
+            KDEVEL_PREINSTALLED=0 && \
+            rpm -q kernel-devel-${KVER} >/dev/null 2>&1 && KDEVEL_PREINSTALLED=1 || dnf install -y kernel-devel-${KVER} && \
             mkdir -p /tmp/vmw && cd /tmp/vmw && \
             curl -fL -o "$BUNDLE" "$BUNDLE_URL" && \
             chmod +x "$BUNDLE" && \
@@ -76,6 +78,6 @@ modules:
             depmod -a ${KVER} && \
             echo -e "vmw_vmci\nvmmon" > /usr/lib/modules-load.d/vmware.conf && \
             cd / && rm -rf /tmp/vmw && \
-            dnf remove -y kernel-devel-${KVER} kernel-headers-${KVER}
+            [ "$KDEVEL_PREINSTALLED" = "1" ] || dnf remove -y kernel-devel-${KVER}
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully

@@ -1,0 +1,30 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: containerfile
+snippets:
+  - |
+    RUN set -euo pipefail && \
+        VMWARE_VER="26H1" && \
+        VMWARE_BUILD="25388281" && \
+        BUNDLE="VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64.bundle" && \
+        BUNDLE_URL="https://archive.org/download/VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64/${BUNDLE}" && \
+        KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+        dnf install -y gcc make patch elfutils-libelf-devel && \
+        KDEVEL_PREINSTALLED=0 && \
+        rpm -q kernel-devel-${KVER} >/dev/null 2>&1 && KDEVEL_PREINSTALLED=1 || dnf install -y kernel-devel-${KVER} && \
+        mkdir -p /tmp/vmw && cd /tmp/vmw && \
+        curl -fL -o "$BUNDLE" "$BUNDLE_URL" && \
+        chmod +x "$BUNDLE" && \
+        ./"$BUNDLE" --extract extracted && \
+        tar -xf extracted/vmware-vmx/lib/modules/source/vmmon.tar && \
+        tar -xf extracted/vmware-vmx/lib/modules/source/vmnet.tar && \
+        sed -i 's/^VM_UNAME = $(shell uname -r)$/ifdef KVERSION\n VM_UNAME = $(KVERSION)\nelse\n VM_UNAME = $(shell uname -r)\nendif/' vmmon-only/Makefile && \
+        sed -i 's/^VM_UNAME = $(shell uname -r)$/ifdef KVERSION\n VM_UNAME = $(KVERSION)\nelse\n VM_UNAME = $(shell uname -r)\nendif/' vmnet-only/Makefile && \
+        make -C vmmon-only KVERSION=${KVER} VM_KBUILD=yes && \
+        make -C vmnet-only KVERSION=${KVER} VM_KBUILD=yes && \
+        install -Dm644 vmmon-only/vmmon.ko /usr/lib/modules/${KVER}/extra/vmware/vmmon.ko && \
+        install -Dm644 vmnet-only/vmnet.ko /usr/lib/modules/${KVER}/extra/vmware/vmnet.ko && \
+        depmod -a ${KVER} && \
+        echo -e "vmw_vmci\nvmmon" > /usr/lib/modules-load.d/vmware.conf && \
+        cd / && rm -rf /tmp/vmw && \
+        [ "$KDEVEL_PREINSTALLED" = "1" ] || dnf remove -y kernel-devel-${KVER}

@@ -1,0 +1,27 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: dnf
+install:
+  packages:
+    # VMware Workstation runtime dependencies
+    - dkms
+    - fuse2
+    - gtkmm3
+    - libcanberra
+    - libaio
+    - pcsclite
+    - hicolor-icon-theme
+    - libxcrypt-compat
+    - libxml2-legacy
+    - gtk3
+    - gcr
+    # Additional build dependencies for kernel modules
+    - gcc
+    - make
+    - patch
+    - elfutils-libelf-devel
+    - kernel-devel
+    - kernel-headers
+    # Other utilities
+    - sqlite
+    - curl

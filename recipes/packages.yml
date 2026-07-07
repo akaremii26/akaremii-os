@@ -1,0 +1,23 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: dnf
+repos:
+  copr:
+    - atim/starship
+    - matinlotfali/KDE-Rounded-Corners
+    - scujas/plasma-applet-appgrid
+install:
+  packages:
+    - micro
+    - starship
+    - cava
+    - kwin-effect-roundcorners
+    - plasma-applet-appgrid
+    - python-websockets
+    - qt6-qtwebsockets-devel
+    - https://github.com/samuelngs/apple-emoji-ttf/releases/download/macos-26-20260613-f1fc560b/fonts-apple-color-emoji.rpm
+
+remove:
+  packages:
+    - firefox
+    - firefox-langpacks

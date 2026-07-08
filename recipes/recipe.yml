@@ -12,60 +12,12 @@ image-version: latest # latest is also supported if you want new updates ASAP
 # module configuration, executed in order
 # you can include multiple instances of the same module
 modules:
-  - type: files
-    files:
-      - source: system
-        destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
-
-  - type: script
-    snippets:
-      - |
-        curl -sL -o /tmp/apple-emoji.rpm https://github.com/samuelngs/apple-emoji-ttf/releases/download/macos-26-20260613-f1fc560b/fonts-apple-color-emoji.rpm
-        dnf install -y /tmp/apple-emoji.rpm
-        rm -f /tmp/apple-emoji.rpm
-
-  - type: dnf
-    repos:
-      copr:
-        - atim/starship
-        - matinlotfali/KDE-Rounded-Corners
-        - scujas/plasma-applet-appgrid
-    install:
-      packages:
-        - micro
-        - starship
-        - cava
-        - kwin-effect-roundcorners
-        - plasma-applet-appgrid
-        - python-websockets
-        - qt6-qtwebsockets-devel
-
-    remove:
-      packages:
-        # example: removing firefox (in favor of the flatpak)
-        # "firefox" is the main package, "firefox-langpacks" is a dependency
-        - firefox
-        - firefox-langpacks # also remove firefox dependency (not required for all packages, this is a special case)
-
-  - type: default-flatpaks
-    configurations:
-      - notify: true # Send notification after install/uninstall is finished (true/false)
-        scope: system
-        # If no repo information is specified, Flathub will be used by default
-        install: # system flatpaks we want all users to have and not remove
-          - org.mozilla.firefox
-          - org.gnome.Loupe
-      - scope: user # Also add Flathub user repo, but no user packages
-
-  - type: os-release
-    properties:
-      NAME: "Akaremii OS"
-      ID: "akaremii-os"
-      ID_LIKE: "fedora"
-      PRETTY_NAME: "Akaremii OS"
-      HOME_URL: "https://github.com/akaremii26/akaremii-os"
-      DOCUMENTATION_URL: "https://github.com/akaremii26/akaremii-os"
-      SUPPORT_URL: "https://github.com/akaremii26/akaremii-os"
-      BUG_REPORT_URL: "https://github.com/akaremii26/akaremii-os/issues/"
-
+  - from-file: system-files.yml
+  - from-file: packages.yml
+  - from-file: vmware-dependencies.yml
+  - from-file: os-release-config.yml
+  - from-file: vmware-modules.yml
+  - from-file: vmware-userspace.yml
+  - from-file: vmware-dkms.yml
+  - from-file: vmware-systemd.yml
   - type: signing # this sets up the proper policy & signing files for signed images to work fully

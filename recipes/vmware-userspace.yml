@@ -1,0 +1,101 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: containerfile
+snippets:
+  - |
+    # Install VMware Workstation userspace from AUR PKGBUILD
+    RUN set -euo pipefail && \
+        VMWARE_VER="26H1" && \
+        VMWARE_BUILD="25388281" && \
+        BUNDLE="VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64.bundle" && \
+        BUNDLE_URL="https://archive.org/download/VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64/${BUNDLE}" && \
+        EXTRACTED_DIR="/tmp/vmware-extracted" && \
+        mkdir -p "$EXTRACTED_DIR" && \
+        cd "$EXTRACTED_DIR" && \
+        echo "Downloading VMware Workstation bundle..." && \
+        curl -fL -o "$BUNDLE" "$BUNDLE_URL" && \
+        chmod +x "$BUNDLE" && \
+        echo "Extracting VMware Workstation..." && \
+        ./"$BUNDLE" --extract extracted && \
+        cd extracted && \
+        VMWARE_INSTALLER_VERSION=$(grep -oPm1 '(?<=<version>)[^<]+' vmware-installer/manifest.xml) && \
+        echo "VMware Installer version: $VMWARE_INSTALLER_VERSION" && \
+        mkdir -p \
+          /etc/{pam.d,modprobe.d,vmware,vmware-installer} \
+          /usr/{share,bin} \
+          /usr/include/vmware-vix \
+          /usr/lib/{vmware/setup,vmware-vix,vmware-ovftool,vmware-installer/"$VMWARE_INSTALLER_VERSION",modules-load.d} \
+          /usr/share/{doc/vmware-vix,licenses/vmware-workstation} \
+          /var/lib/vmware/Shared\ VMs && \
+        echo "Copying VMware files..." && \
+        cp -r vmware-workstation/share/* /usr/share && \
+        cp -r vmware-workstation/man /usr/share && \
+        cp -r vmware-network-editor-ui/share/* /usr/share && \
+        cp -r vmware-other-apps/share/* /usr/share && \
+        cp -r vmware-workstation/bin/* /usr/bin && \
+        cp -r vmware-vmx/{,s}bin/* /usr/bin && \
+        cp -r vmware-vix-core/bin/* /usr/bin && \
+        cp -r vmware-vprobe/bin/* /usr/bin && \
+        cp -r vmware-workstation/lib/* /usr/lib/vmware && \
+        cp -r vmware-other-apps/lib/* /usr/lib/vmware && \
+        cp -r vmware-vmx/{lib/*,roms} /usr/lib/vmware && \
+        cp -r vmware-vprobe/lib/* /usr/lib/vmware && \
+        cp -r vmware-usbarbitrator/bin /usr/lib/vmware && \
+        cp -r vmware-network-editor/lib /usr/lib/vmware && \
+        cp -r vmware-player-setup/vmware-config /usr/lib/vmware/setup && \
+        cp -r vmware-vix-lib-Workstation1700/lib/Workstation-17.0.0 /usr/lib/vmware-vix && \
+        cp -r vmware-vix-core/{lib/*,vixwrapper-config.txt} /usr/lib/vmware-vix && \
+        cp -r vmware-vix-core/doc/* /usr/share/doc/vmware-vix && \
+        cp -r vmware-ovftool/* /usr/lib/vmware-ovftool && \
+        cp -r vmware-installer/{python,sopython,vmis,vmis-launcher,vmware-installer,vmware-installer.py} /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION" && \
+        cp -r vmware-vix-core/include/* /usr/include/vmware-vix && \
+        echo "Extracting guest tools ISOs..." && \
+        for isoimage in windows; do \
+          install -Dm 644 "vmware-tools-$isoimage/$isoimage.iso" /usr/lib/vmware/isoimages/$isoimage.iso; \
+        done && \
+        echo "Downloading guest OS ISOs..." && \
+        cd /tmp && \
+        curl -fL -o linux.iso "https://packages-prod.broadcom.com/tools/frozen/linux/linux.iso" && \
+        curl -fL -o linuxPreGlibc25.iso "https://packages-prod.broadcom.com/tools/frozen/linux/linuxPreGlibc25.iso" && \
+        curl -fL -o netware.iso "https://packages-prod.broadcom.com/tools/frozen/netware/netware.iso" && \
+        curl -fL -o solaris.iso "https://packages-prod.broadcom.com/tools/frozen/solaris/solaris.iso" && \
+        curl -fL -o winPre2k.iso "https://packages-prod.broadcom.com/tools/frozen/windows/winPre2k.iso" && \
+        curl -fL -o winPreVista.iso "https://packages-prod.broadcom.com/tools/frozen/windows/winPreVista.iso" && \
+        curl -fL -o winVistaSP1.iso "https://packages-prod.broadcom.com/tools/frozen/windows/WindowsToolsVista/SP1/windows.iso" && \
+        curl -fL -o winVistaSP2.iso "https://packages-prod.broadcom.com/tools/frozen/windows/WindowsToolsVista/SP2/windows.iso" && \
+        mkdir -p /usr/lib/vmware/isoimages && \
+        install -Dm 644 linux.iso /usr/lib/vmware/isoimages/linux.iso && \
+        install -Dm 644 linuxPreGlibc25.iso /usr/lib/vmware/isoimages/linuxPreGlibc25.iso && \
+        install -Dm 644 netware.iso /usr/lib/vmware/isoimages/netware.iso && \
+        install -Dm 644 solaris.iso /usr/lib/vmware/isoimages/solaris.iso && \
+        install -Dm 644 winPre2k.iso /usr/lib/vmware/isoimages/winPre2k.iso && \
+        install -Dm 644 winPreVista.iso /usr/lib/vmware/isoimages/winPreVista.iso && \
+        install -Dm 644 winVistaSP1.iso /usr/lib/vmware/isoimages/winVistaSP1.iso && \
+        install -Dm 644 winVistaSP2.iso /usr/lib/vmware/isoimages/winVistaSP2.iso && \
+        echo "Setting up licenses and documentation..." && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/EULA" /usr/share/doc/vmware-workstation/EULA && \
+        ln -s /usr/share/doc/vmware-workstation/EULA /usr/share/licenses/vmware-workstation/VMware\ Workstation\ -\ EULA.txt && \
+        ln -s /usr/lib/vmware-ovftool/vmware.eula /usr/share/licenses/vmware-workstation/VMware\ OVF\ Tool\ -\ EULA.txt && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ Workstation\ open\ source\ license.txt && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/ovftool_open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ OVF\ Tool\ open\ source\ license.txt && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-vix-core/open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ VIX\ open\ source\ license.txt && \
+        rm /usr/lib/vmware-ovftool/{vmware-eula.rtf,open_source_licenses.txt,manifest.xml} && \
+        echo "Setting up permissions..." && \
+        chmod +x /usr/bin/vm* /usr/lib/vmware/bin/* /usr/lib/vmware/setup/* /usr/lib/vmware-ovftool/{ovftool,ovftool.bin} /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION"/{vmware-installer,vmis-launcher} /usr/lib/vmware-vix/setup/* && \
+        chmod +s /usr/bin/vmware-authd /usr/lib/vmware/bin/{vmware-vmx,vmware-vmx-debug,vmware-vmx-stats} && \
+        echo "Creating symlinks..." && \
+        for link in licenseTool vmware vmware-app-control vmware-enter-serial vmware-fuseUI vmware-gksu vmware-modconfig vmware-modconfig-console vmware-mount vmware-netcfg vmware-setup-helper vmware-tray vmware-vmblock-fuse vmware-vprobe vmware-zenity; do \
+          ln -s /usr/lib/vmware/bin/appLoader /usr/lib/vmware/bin/$link; \
+        done && \
+        ln -s /usr/lib/vmware/bin/appLoader /usr/bin/vmrest && \
+        for link in vmware-fuseUI vmware-mount vmware-netcfg vmware-usbarbitrator; do \
+          ln -s /usr/lib/vmware/bin/$link /usr/bin/$link; \
+        done && \
+        ln -s /usr/lib/vmware/icu /etc/vmware/icu && \
+        ln -s /usr/lib/vmware-ovftool/ovftool /usr/bin/ovftool && \
+        ln -s /usr/lib/vmware-vix/libvixAllProducts.so /usr/lib/libvixAllProducts.so && \
+        echo "Setting up modules..." && \
+        echo -e "vmw_vmci\nvmmon" > /usr/lib/modules-load.d/vmware.conf && \
+        cd / && \
+        rm -rf "$EXTRACTED_DIR" /tmp/*.iso && \
+        echo "VMware Workstation userspace installation complete"

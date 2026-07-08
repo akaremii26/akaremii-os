@@ -1,0 +1,39 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: containerfile
+snippets:
+  - |
+    # Build and install VMware DKMS kernel modules
+    RUN set -euo pipefail && \
+        VMWARE_VER="26H1" && \
+        VMWARE_BUILD="25388281" && \
+        BUNDLE="VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64.bundle" && \
+        BUNDLE_URL="https://archive.org/download/VMware-Workstation-Full-${VMWARE_VER}-${VMWARE_BUILD}.x86_64/${BUNDLE}" && \
+        EXTRACTED_DIR="/tmp/vmware-dkms" && \
+        DKMS_DIR="/usr/src/vmware-workstation-${VMWARE_VER}_${VMWARE_BUILD}" && \
+        mkdir -p "$EXTRACTED_DIR" "$DKMS_DIR" && \
+        cd "$EXTRACTED_DIR" && \
+        echo "Downloading VMware bundle for DKMS..." && \
+        curl -fL -o "$BUNDLE" "$BUNDLE_URL" && \
+        chmod +x "$BUNDLE" && \
+        echo "Extracting VMware kernel modules..." && \
+        ./"$BUNDLE" --extract extracted && \
+        echo "Setting up DKMS configuration..." && \
+        sed -e "s/@PKGNAME@/vmware-workstation/g" -e "s/@PKGVER@/${VMWARE_VER}_${VMWARE_BUILD}/g" "$EXTRACTED_DIR/extracted/vmware-vmx/extra/dkms.conf.in" > "$DKMS_DIR/dkms.conf" || \
+        sed -e "s/@PKGNAME@/vmware-workstation/g" -e "s/@PKGVER@/${VMWARE_VER}_${VMWARE_BUILD}/g" /usr/src/vmware-workstation-${VMWARE_VER}_${VMWARE_BUILD}/dkms.conf.in > "$DKMS_DIR/dkms.conf" && \
+        for module in vmmon vmnet; do \
+          echo "Extracting $module module..." && \
+          tar -xf "$EXTRACTED_DIR/extracted/vmware-vmx/lib/modules/source/$module.tar" -C "$DKMS_DIR" && \
+          echo "Applying patches to $module..." && \
+          patch -p2 --read-only=ignore --directory="$DKMS_DIR/$module-only" < /usr/src/vmware-workstation-${VMWARE_VER}_${VMWARE_BUILD}/$module.patch || true; \
+        done && \
+        echo "Adding DKMS kernel modules..." && \
+        dkms add -m vmware-workstation -v ${VMWARE_VER}_${VMWARE_BUILD} && \
+        KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+        echo "Building DKMS modules for kernel $KVER..." && \
+        dkms build -m vmware-workstation -v ${VMWARE_VER}_${VMWARE_BUILD} -k ${KVER} && \
+        echo "Installing DKMS modules..." && \
+        dkms install -m vmware-workstation -v ${VMWARE_VER}_${VMWARE_BUILD} -k ${KVER} && \
+        echo "Cleaning up..." && \
+        rm -rf "$EXTRACTED_DIR" && \
+        echo "DKMS modules installation complete"

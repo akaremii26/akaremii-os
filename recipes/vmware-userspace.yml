@@ -21,12 +21,13 @@ snippets:
         VMWARE_INSTALLER_VERSION=$(grep -oPm1 '(?<=<version>)[^<]+' vmware-installer/manifest.xml) && \
         echo "VMware Installer version: $VMWARE_INSTALLER_VERSION" && \
         mkdir -p \
-          /etc/{pam.d,modprobe.d,vmware,vmware-installer} \
+          /etc/{pam.d,modprobe.d,vmware,vmware-installer,vmware-vix} \
           /usr/{share,bin} \
           /usr/include/vmware-vix \
           /usr/lib/{vmware/setup,vmware-vix,vmware-ovftool,vmware-installer/"$VMWARE_INSTALLER_VERSION",modules-load.d} \
+          /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION"/{lib/lib,artwork} \
           /usr/share/{doc/vmware-vix,licenses/vmware-workstation} \
-          /var/lib/vmware/Shared\ VMs && \
+          "/var/lib/vmware/Shared VMs" && \
         echo "Copying VMware files..." && \
         cp -r vmware-workstation/share/* /usr/share && \
         cp -r vmware-workstation/man /usr/share && \
@@ -49,10 +50,10 @@ snippets:
         cp -r vmware-ovftool/* /usr/lib/vmware-ovftool && \
         cp -r vmware-installer/{python,sopython,vmis,vmis-launcher,vmware-installer,vmware-installer.py} /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION" && \
         cp -r vmware-vix-core/include/* /usr/include/vmware-vix && \
+        echo "Installing configure-initscript.sh..." && \
+        install -Dm 755 /usr/src/vmware-workstation/configure-initscript.sh /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION"/bin/configure-initscript.sh && \
         echo "Extracting guest tools ISOs..." && \
-        for isoimage in windows; do \
-          install -Dm 644 "vmware-tools-$isoimage/$isoimage.iso" /usr/lib/vmware/isoimages/$isoimage.iso; \
-        done && \
+        install -Dm 644 vmware-tools-windows/windows.iso /usr/lib/vmware/isoimages/windows.iso && \
         echo "Downloading guest OS ISOs..." && \
         cd /tmp && \
         curl -fL -o linux.iso "https://packages-prod.broadcom.com/tools/frozen/linux/linux.iso" && \
@@ -74,15 +75,41 @@ snippets:
         install -Dm 644 winVistaSP2.iso /usr/lib/vmware/isoimages/winVistaSP2.iso && \
         echo "Setting up licenses and documentation..." && \
         install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/EULA" /usr/share/doc/vmware-workstation/EULA && \
-        ln -s /usr/share/doc/vmware-workstation/EULA /usr/share/licenses/vmware-workstation/VMware\ Workstation\ -\ EULA.txt && \
-        ln -s /usr/lib/vmware-ovftool/vmware.eula /usr/share/licenses/vmware-workstation/VMware\ OVF\ Tool\ -\ EULA.txt && \
-        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ Workstation\ open\ source\ license.txt && \
-        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/ovftool_open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ OVF\ Tool\ open\ source\ license.txt && \
-        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-vix-core/open_source_licenses.txt" /usr/share/licenses/vmware-workstation/VMware\ VIX\ open\ source\ license.txt && \
+        ln -s "/usr/share/doc/vmware-workstation/EULA" "/usr/share/licenses/vmware-workstation/VMware Workstation - EULA.txt" && \
+        ln -s "/usr/lib/vmware-ovftool/vmware.eula" "/usr/share/licenses/vmware-workstation/VMware OVF Tool - EULA.txt" && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/open_source_licenses.txt" "/usr/share/licenses/vmware-workstation/VMware Workstation open source license.txt" && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-workstation/doc/ovftool_open_source_licenses.txt" "/usr/share/licenses/vmware-workstation/VMware OVF Tool open source license.txt" && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-vix-core/open_source_licenses.txt" "/usr/share/licenses/vmware-workstation/VMware VIX open source license.txt" && \
         rm /usr/lib/vmware-ovftool/{vmware-eula.rtf,open_source_licenses.txt,manifest.xml} && \
+        echo "Installing modprobe config..." && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-vmx/etc/modprobe.d/modprobe-vmware-fuse.conf" /etc/modprobe.d/vmware-fuse.conf && \
+        echo "Installing modules.xml..." && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-vmx/extra/modules.xml" /usr/lib/vmware/modules/modules.xml && \
+        echo "Installing vmware-installer bootstrap..." && \
+        install -Dm 644 "$EXTRACTED_DIR/extracted/vmware-installer/bootstrap" /etc/vmware-installer/bootstrap && \
+        sed \
+          -e "s/@@VERSION@@/$VMWARE_INSTALLER_VERSION/" \
+          -e "s,@@VMWARE_INSTALLER@@,/usr/lib/vmware-installer/$VMWARE_INSTALLER_VERSION," \
+          -i /etc/vmware-installer/bootstrap && \
+        echo "Creating vmware-installer sqlite database..." && \
+        sqlite3 /etc/vmware-installer/database "CREATE TABLE settings(key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL, component_name VARCHAR NOT NULL);" && \
+        sqlite3 /etc/vmware-installer/database "INSERT INTO settings(key,value,component_name) VALUES('db.schemaVersion','2','vmware-installer');" && \
+        sqlite3 /etc/vmware-installer/database "CREATE TABLE components(id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, version VARCHAR NOT NULL, buildNumber INTEGER NOT NULL, component_core_id INTEGER NOT NULL, longName VARCHAR NOT NULL, description VARCHAR, type INTEGER NOT NULL);" && \
+        WINDOWS_VER=$(grep -oPm1 '(?<=<version>)[^<]+' "$EXTRACTED_DIR/extracted/vmware-tools-windows/manifest.xml") && \
+        sqlite3 /etc/vmware-installer/database "INSERT INTO components(name,version,buildNumber,component_core_id,longName,description,type) VALUES('vmware-tools-windows','$WINDOWS_VER',${VMWARE_BUILD},1,'windows','windows',1);" && \
+        for isoimage in linux linuxPreGlibc25 netware solaris winPre2k winPreVista winVistaSP1 winVistaSP2; do \
+          sqlite3 /etc/vmware-installer/database "INSERT INTO components(name,version,buildNumber,component_core_id,longName,description,type) VALUES('vmware-tools-$isoimage','1',${VMWARE_BUILD},1,'$isoimage','$isoimage',1);" ; \
+        done && \
         echo "Setting up permissions..." && \
-        chmod +x /usr/bin/vm* /usr/lib/vmware/bin/* /usr/lib/vmware/setup/* /usr/lib/vmware-ovftool/{ovftool,ovftool.bin} /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION"/{vmware-installer,vmis-launcher} /usr/lib/vmware-vix/setup/* && \
-        chmod +s /usr/bin/vmware-authd /usr/lib/vmware/bin/{vmware-vmx,vmware-vmx-debug,vmware-vmx-stats} && \
+        chmod +x /usr/bin/vm* && \
+        chmod +x /usr/lib/vmware/bin/* && \
+        chmod +x /usr/lib/vmware/setup/* && \
+        chmod +x /usr/lib/vmware/lib/libvmware-gksu.so/gksu-run-helper && \
+        chmod +x /usr/lib/vmware-ovftool/{ovftool,ovftool.bin} && \
+        chmod +x /usr/lib/vmware-installer/"$VMWARE_INSTALLER_VERSION"/{vmware-installer,vmis-launcher} && \
+        chmod +x /usr/lib/vmware-vix/setup/* && \
+        chmod +s /usr/bin/vmware-authd && \
+        chmod +s /usr/lib/vmware/bin/{vmware-vmx,vmware-vmx-debug,vmware-vmx-stats} && \
         echo "Creating symlinks..." && \
         for link in licenseTool vmware vmware-app-control vmware-enter-serial vmware-fuseUI vmware-gksu vmware-modconfig vmware-modconfig-console vmware-mount vmware-netcfg vmware-setup-helper vmware-tray vmware-vmblock-fuse vmware-vprobe vmware-zenity; do \
           ln -s /usr/lib/vmware/bin/appLoader /usr/lib/vmware/bin/$link; \
@@ -94,8 +121,23 @@ snippets:
         ln -s /usr/lib/vmware/icu /etc/vmware/icu && \
         ln -s /usr/lib/vmware-ovftool/ovftool /usr/bin/ovftool && \
         ln -s /usr/lib/vmware-vix/libvixAllProducts.so /usr/lib/libvixAllProducts.so && \
-        echo "Setting up modules..." && \
+        echo "Setting up modules-load..." && \
         echo -e "vmw_vmci\nvmmon" > /usr/lib/modules-load.d/vmware.conf && \
+        echo "Fixing .desktop files..." && \
+        sed -i 's,@@BINARY@@,/usr/bin/vmware,' /usr/share/applications/vmware-workstation.desktop && \
+        sed -i 's,@@BINARY@@,/usr/bin/vmware-netcfg,' /usr/share/applications/vmware-netcfg.desktop && \
+        sed -i '/^StartupNotify=.*/a StartupWMClass=vmware' /usr/share/applications/vmware-workstation.desktop && \
+        sed -i '/^StartupNotify=.*/a StartupWMClass=vmware-netcfg' /usr/share/applications/vmware-netcfg.desktop && \
+        echo "Fixing libconf paths..." && \
+        sed -i 's,@@LIBCONF_DIR@@,/usr/lib/vmware/libconf,g' /usr/lib/vmware/libconf/etc/gtk-3.0/gdk-pixbuf.loaders && \
+        echo "Patching vmware/vmware-tray to source env and skip module check..." && \
+        for program in vmware vmware-tray; do \
+          sed -e '/export PRODUCT_NAME/asource /etc/conf.d/vmware' \
+              -e 's/if "$BINDIR"\/vmware-modconfig --appname=.*/if true ||/' \
+              -i /usr/bin/$program; \
+        done && \
+        echo "Removing xkeymap (provided by vmware-keymaps)..." && \
+        rm -rf /usr/lib/vmware/xkeymap && \
         cd / && \
         rm -rf "$EXTRACTED_DIR" /tmp/*.iso && \
         echo "VMware Workstation userspace installation complete"

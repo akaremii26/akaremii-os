@@ -50,7 +50,7 @@
         },
         {
             "type": "memory",
-            "key": " "
+            "key": " "
         },
         {
             "type": "disk",
@@ -63,7 +63,7 @@
         },
         {
             "type": "battery",
-            "key": " "
+            "key": " "
         },
         {
             "type": "gamepad",
@@ -76,15 +76,15 @@
         },
         {
             "type": "wm",
-            "key": " "
+            "key": " "
         },
         {
             "type": "shell",
-            "key": " "
+            "key": " "
         },
         {
             "type": "terminal",
-            "key": " "
+            "key": " "
         },
         {
             "type": "packages",

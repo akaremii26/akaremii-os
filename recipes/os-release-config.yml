@@ -6,6 +6,7 @@ properties:
   ID: "akaremii-os"
   ID_LIKE: "fedora"
   PRETTY_NAME: "Akaremii OS"
+  LOGO: "kde-symbolic"
   HOME_URL: "https://github.com/akaremii26/akaremii-os"
   DOCUMENTATION_URL: "https://github.com/akaremii26/akaremii-os"
   SUPPORT_URL: "https://github.com/akaremii26/akaremii-os"

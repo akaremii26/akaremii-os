@@ -4,14 +4,12 @@ type: dnf
 repos:
   copr:
     - atim/starship
-    - matinlotfali/KDE-Rounded-Corners
     - scujas/plasma-applet-appgrid
 install:
   packages:
     - micro
     - starship
     - cava
-    - kwin-effect-roundcorners
     - plasma-applet-appgrid
     - python-websockets
     - qt6-qtwebsockets-devel

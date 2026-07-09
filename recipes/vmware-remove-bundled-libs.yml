@@ -1,0 +1,46 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: script
+snippets:
+  - |
+    rm -rf /usr/lib/vmware/lib/libatk-1.0.so.0
+    rm -rf /usr/lib/vmware/lib/libatk-bridge-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libatspi.so.0
+    rm -rf /usr/lib/vmware/lib/libcairo-gobject.so.2
+    rm -rf /usr/lib/vmware/lib/libcairo.so.2
+    rm -rf /usr/lib/vmware/lib/libfontconfig.so.1
+    rm -rf /usr/lib/vmware/lib/libfreetype.so.6
+    rm -rf /usr/lib/vmware/lib/libgailutil-3.so.0
+    rm -rf /usr/lib/vmware/lib/libgdk-3.so.0
+    rm -rf /usr/lib/vmware/lib/libgdk_pixbuf-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgdk_pixbuf_xlib-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgio-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libglib-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgmodule-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgobject-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgthread-2.0.so.0
+    rm -rf /usr/lib/vmware/lib/libgtk-3.so.0
+    rm -rf /usr/lib/vmware/lib/libharfbuzz.so.0
+    rm -rf /usr/lib/vmware/lib/libICE.so.6
+    rm -rf /usr/lib/vmware/lib/libpango-1.0.so.0
+    rm -rf /usr/lib/vmware/lib/libpangocairo-1.0.so.0
+    rm -rf /usr/lib/vmware/lib/libpangoft2-1.0.so.0
+    rm -rf /usr/lib/vmware/lib/libSM.so.6
+    rm -rf /usr/lib/vmware/lib/libX11.so.6
+    rm -rf /usr/lib/vmware/lib/libXau.so.6
+    rm -rf /usr/lib/vmware/lib/libxcb-shm.so.0
+    rm -rf /usr/lib/vmware/lib/libxcb.so.1
+    rm -rf /usr/lib/vmware/lib/libXcomposite.so.1
+    rm -rf /usr/lib/vmware/lib/libXcursor.so.1
+    rm -rf /usr/lib/vmware/lib/libXdamage.so.1
+    rm -rf /usr/lib/vmware/lib/libXdmcp.so.6
+    rm -rf /usr/lib/vmware/lib/libXext.so.6
+    rm -rf /usr/lib/vmware/lib/libXfixes.so.3
+    rm -rf /usr/lib/vmware/lib/libXft.so.2
+    rm -rf /usr/lib/vmware/lib/libXi.so.6
+    rm -rf /usr/lib/vmware/lib/libXinerama.so.1
+    rm -rf /usr/lib/vmware/lib/libXrandr.so.2
+    rm -rf /usr/lib/vmware/lib/libXrender.so.1
+    rm -rf /usr/lib/vmware/lib/libXss.so.1
+    rm -rf /usr/lib/vmware/lib/libXtst.so.6
+    echo "Bundled VMware libraries removed"

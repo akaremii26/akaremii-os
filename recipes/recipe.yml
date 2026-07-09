@@ -18,6 +18,7 @@ modules:
   - from-file: os-release-config.yml
   - from-file: vmware-modules.yml
   - from-file: vmware-userspace.yml
+  - from-file: vmware-remove-bundled-libs.yml
   - from-file: vmware-dkms.yml
   - from-file: vmware-systemd.yml
   - type: signing # this sets up the proper policy & signing files for signed images to work fully

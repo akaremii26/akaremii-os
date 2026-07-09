@@ -42,4 +42,7 @@ snippets:
         /usr/lib/vmware/lib/libXrandr.so.2 \
         /usr/lib/vmware/lib/libXrender.so.1 \
         /usr/lib/vmware/lib/libXss.so.1 \
-        /usr/lib/vmware/lib/libXtst.so.6
+        /usr/lib/vmware/lib/libXtst.so.6 && \
+        rm -f /usr/lib/vmware/libconf/etc/gtk-3.0/gschemas.compiled && \
+        ln -s /usr/share/glib-2.0/schemas/gschemas.compiled \
+        /usr/lib/vmware/libconf/etc/gtk-3.0/gschemas.compiled

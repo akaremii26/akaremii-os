@@ -1,0 +1,54 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: containerfile
+snippets:
+  - |
+    # Remove bundled VMware libraries that conflict with system libraries
+    RUN set -euo pipefail && \
+        BUNDLED_LIBS=(
+          libatk-1.0.so.0
+          libatk-bridge-2.0.so.0
+          libatspi.so.0
+          libcairo-gobject.so.2
+          libcairo.so.2
+          libfontconfig.so.1
+          libfreetype.so.6
+          libgailutil-3.so.0
+          libgdk-3.so.0
+          libgdk_pixbuf-2.0.so.0
+          libgdk_pixbuf_xlib-2.0.so.0
+          libgio-2.0.so.0
+          libglib-2.0.so.0
+          libgmodule-2.0.so.0
+          libgobject-2.0.so.0
+          libgthread-2.0.so.0
+          libgtk-3.so.0
+          libharfbuzz.so.0
+          libICE.so.6
+          libpango-1.0.so.0
+          libpangocairo-1.0.so.0
+          libpangoft2-1.0.so.0
+          libSM.so.6
+          libX11.so.6
+          libXau.so.6
+          libxcb-shm.so.0
+          libxcb.so.1
+          libXcomposite.so.1
+          libXcursor.so.1
+          libXdamage.so.1
+          libXdmcp.so.6
+          libXext.so.6
+          libXfixes.so.3
+          libXft.so.2
+          libXi.so.6
+          libXinerama.so.1
+          libXrandr.so.2
+          libXrender.so.1
+          libXss.so.1
+          libXtst.so.6
+        ) && \
+        echo "Removing bundled VMware libraries..." && \
+        for lib in "${BUNDLED_LIBS[@]}"; do \
+          rm -rf "/usr/lib/vmware/lib/$lib" ; \
+        done && \
+        echo "Bundled VMware libraries removed"

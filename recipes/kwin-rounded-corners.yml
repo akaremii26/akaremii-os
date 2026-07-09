@@ -15,6 +15,7 @@ snippets:
             qt6-qtbase-devel \
             qt6-qtbase-private-devel \
             libepoxy-devel \
+            libdrm-devel \
             libxcb-devel \
             xcb-util-devel \
             git \
@@ -38,6 +39,7 @@ snippets:
             qt6-qtbase-devel \
             qt6-qtbase-private-devel \
             libepoxy-devel \
+            libdrm-devel \
             libxcb-devel \
             xcb-util-devel \
             git \

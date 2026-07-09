@@ -30,7 +30,7 @@ snippets:
         cmake --build /tmp/krc/build -j$(nproc) && \
         cmake --install /tmp/krc/build && \
         rm -rf /tmp/krc && \
-        dnf remove -y --no-dependencies \
+        dnf remove -y --noautoremove \
             cmake \
             gcc-c++ \
             extra-cmake-modules \

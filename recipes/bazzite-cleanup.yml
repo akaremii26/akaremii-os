@@ -3,20 +3,10 @@
 type: containerfile
 snippets:
   - |
-    RUN set -euo pipefail && \
-        dnf remove -y --no-dependencies \
-            webapp-manager \
-            input-remapper \
-            opengamepadui \
-            sysprof \
-        && \
-        rm -f /usr/bin/gamemode-nested \
-              /usr/share/applications/gamemode-nested.desktop \
-              /usr/bin/steamos-nested-desktop \
-              /usr/share/applications/steamos-nested-desktop.desktop \
-        && \
-        rm -f /usr/share/ublue-os/docs/serve.sh \
-              /usr/share/applications/ublue-os-forum.desktop \
-        && \
-        dnf clean all && \
-        rm -rf /var/cache/dnf
+    RUN rm -f \
+            /usr/share/applications/webapp-manager.desktop \
+            /usr/share/applications/input-remapper-gtk.desktop \
+            /usr/share/applications/opengamepadui.desktop \
+            /usr/share/applications/org.gnome.Sysprof.desktop \
+            /usr/share/applications/gamemode-nested.desktop \
+            /usr/share/ublue-os/docs/serve.sh

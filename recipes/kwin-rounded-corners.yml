@@ -10,6 +10,7 @@ snippets:
             kwin-devel \
             kf6-kconfigwidgets-devel \
             kf6-kwindowsystem-devel \
+            kf6-ki18n-devel \
             qt6-qtbase-devel \
             libepoxy-devel \
             git \
@@ -28,6 +29,7 @@ snippets:
             kwin-devel \
             kf6-kconfigwidgets-devel \
             kf6-kwindowsystem-devel \
+            kf6-ki18n-devel \
             qt6-qtbase-devel \
             libepoxy-devel \
             git \

@@ -13,7 +13,6 @@ install:
     - plasma-applet-appgrid
     - python-websockets
     - qt6-qtwebsockets-devel
-    - https://github.com/samuelngs/apple-emoji-ttf/releases/download/macos-26-20260613-f1fc560b/fonts-apple-color-emoji.rpm
 
 remove:
   packages:

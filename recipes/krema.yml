@@ -18,7 +18,6 @@ snippets:
             kf6-kdbusaddons-devel \
             kf6-ki18n-devel \
             kf6-kglobalaccel-devel \
-            kf6-kcolorscheme-devel \
             kf6-kiconthemes-devel \
             kf6-kcrash-devel \
             kf6-kxmlgui-devel \
@@ -27,7 +26,7 @@ snippets:
             kf6-kirigami-addons-devel \
             layer-shell-qt-devel \
             plasma-workspace-devel \
-            kf6-kpipewire-devel \
+            kpipewire-devel \
             wayland-devel \
             git \
         && \
@@ -53,7 +52,6 @@ snippets:
             kf6-kdbusaddons-devel \
             kf6-ki18n-devel \
             kf6-kglobalaccel-devel \
-            kf6-kcolorscheme-devel \
             kf6-kiconthemes-devel \
             kf6-kcrash-devel \
             kf6-kxmlgui-devel \
@@ -62,7 +60,7 @@ snippets:
             kf6-kirigami-addons-devel \
             layer-shell-qt-devel \
             plasma-workspace-devel \
-            kf6-kpipewire-devel \
+            kpipewire-devel \
             wayland-devel \
             git \
         && \

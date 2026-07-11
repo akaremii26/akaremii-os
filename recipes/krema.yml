@@ -41,6 +41,7 @@ snippets:
         && \
         cmake --build /tmp/krema/build -j$(nproc) && \
         cmake --install /tmp/krema/build && \
+        kbuildsycoca6 --noincremental && \
         rm -rf /tmp/krema && \
         dnf remove -y --noautoremove \
             cmake \

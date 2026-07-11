@@ -6,6 +6,7 @@ snippets:
     RUN set -euo pipefail && \
         dnf install -y \
             cmake \
+            ninja-build \
             gcc-c++ \
             extra-cmake-modules \
             kf6-rpm-macros \
@@ -26,20 +27,24 @@ snippets:
             kf6-kirigami-addons-devel \
             layer-shell-qt-devel \
             plasma-workspace-devel \
+            kf6-kitemmodels-devel \
             kpipewire-devel \
             wayland-devel \
             git \
         && \
         git clone --depth=1 https://github.com/isac322/krema.git /tmp/krema && \
         cmake -S /tmp/krema -B /tmp/krema/build \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DBUILD_TESTING=OFF \
         && \
         cmake --build /tmp/krema/build -j$(nproc) && \
         cmake --install /tmp/krema/build && \
         rm -rf /tmp/krema && \
         dnf remove -y --noautoremove \
             cmake \
+            ninja-build \
             gcc-c++ \
             extra-cmake-modules \
             kf6-rpm-macros \
@@ -60,6 +65,7 @@ snippets:
             kf6-kirigami-addons-devel \
             layer-shell-qt-devel \
             plasma-workspace-devel \
+            kf6-kitemmodels-devel \
             kpipewire-devel \
             wayland-devel \
             git \

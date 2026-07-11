@@ -42,7 +42,7 @@ snippets:
         cmake --build /tmp/krema/build -j$(nproc) && \
         cmake --install /tmp/krema/build && \
         sed -i '/^X-GNOME-Autostart-enabled/a X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_plasma_activation_feedback,zkde_screencast_unstable_v1' \
-            /usr/share/autostart/com.bhyoo.krema.autostart.desktop && \
+            /etc/xdg/autostart/com.bhyoo.krema.autostart.desktop && \
         rm -rf /tmp/krema && \
         dnf remove -y --noautoremove \
             cmake \

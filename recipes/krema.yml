@@ -1,0 +1,70 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
+type: containerfile
+snippets:
+  - |
+    RUN set -euo pipefail && \
+        dnf install -y \
+            cmake \
+            gcc-c++ \
+            extra-cmake-modules \
+            kf6-rpm-macros \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            qt6-qtshadertools-devel \
+            kf6-kwindowsystem-devel \
+            kf6-kconfig-devel \
+            kf6-kcoreaddons-devel \
+            kf6-kdbusaddons-devel \
+            kf6-ki18n-devel \
+            kf6-kglobalaccel-devel \
+            kf6-kcolorscheme-devel \
+            kf6-kiconthemes-devel \
+            kf6-kcrash-devel \
+            kf6-kxmlgui-devel \
+            kf6-kservice-devel \
+            kf6-kirigami-devel \
+            kf6-kirigami-addons-devel \
+            layer-shell-qt-devel \
+            plasma-workspace-devel \
+            kf6-kpipewire-devel \
+            wayland-devel \
+            git \
+        && \
+        git clone --depth=1 https://github.com/isac322/krema.git /tmp/krema && \
+        cmake -S /tmp/krema -B /tmp/krema/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+        && \
+        cmake --build /tmp/krema/build -j$(nproc) && \
+        cmake --install /tmp/krema/build && \
+        rm -rf /tmp/krema && \
+        dnf remove -y --noautoremove \
+            cmake \
+            gcc-c++ \
+            extra-cmake-modules \
+            kf6-rpm-macros \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            qt6-qtshadertools-devel \
+            kf6-kwindowsystem-devel \
+            kf6-kconfig-devel \
+            kf6-kcoreaddons-devel \
+            kf6-kdbusaddons-devel \
+            kf6-ki18n-devel \
+            kf6-kglobalaccel-devel \
+            kf6-kcolorscheme-devel \
+            kf6-kiconthemes-devel \
+            kf6-kcrash-devel \
+            kf6-kxmlgui-devel \
+            kf6-kservice-devel \
+            kf6-kirigami-devel \
+            kf6-kirigami-addons-devel \
+            layer-shell-qt-devel \
+            plasma-workspace-devel \
+            kf6-kpipewire-devel \
+            wayland-devel \
+            git \
+        && \
+        dnf clean all && \
+        rm -rf /var/cache/dnf

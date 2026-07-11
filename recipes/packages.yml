@@ -5,7 +5,6 @@ repos:
   copr:
     - atim/starship
     - scujas/plasma-applet-appgrid
-    - isac322/krema
 install:
   packages:
     - micro
@@ -14,7 +13,6 @@ install:
     - plasma-applet-appgrid
     - python-websockets
     - qt6-qtwebsockets-devel
-    - krema
 
 remove:
   packages:

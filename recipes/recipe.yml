@@ -15,7 +15,6 @@ modules:
   - from-file: system-files.yml
   - from-file: packages.yml
   - from-file: kwin-rounded-corners.yml
-  - from-file: krema.yml
   - from-file: bazzite-cleanup.yml
   - from-file: vmware-dependencies.yml
   - from-file: os-release-config.yml

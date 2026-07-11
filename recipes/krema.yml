@@ -32,7 +32,7 @@ snippets:
             wayland-devel \
             git \
         && \
-        git clone --depth=1 https://github.com/isac322/krema.git /tmp/krema && \
+        git clone --depth=1 -b new-features https://github.com/relativemodder/krema.git /tmp/krema && \
         cmake -S /tmp/krema -B /tmp/krema/build \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

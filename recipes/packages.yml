@@ -13,6 +13,7 @@ install:
     - plasma-applet-appgrid
     - python-websockets
     - qt6-qtwebsockets-devel
+    - https://github.com/Bali10050/Darkly/releases/download/v0.5.38/darkly-0.5.38.fc44.x86_64.rpm
 
 remove:
   packages:

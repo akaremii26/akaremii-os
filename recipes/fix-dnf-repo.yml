@@ -1,0 +1,6 @@
+---
+# Workaround for bazzite-dx bug: null bytes on line 85
+# of /etc/dnf/repos.override.d/99-config_manager.repo breaks dnf config-manager
+type: script
+snippets:
+  - "tr -d '\\0' < /etc/dnf/repos.override.d/99-config_manager.repo > /tmp/fix.repo && mv /tmp/fix.repo /etc/dnf/repos.override.d/99-config_manager.repo"

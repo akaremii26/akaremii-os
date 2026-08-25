@@ -1,0 +1,6 @@
+---
+# Workaround for bazzite-dx bug: trailing whitespace on line 85
+# of /etc/dnf/repos.override.d/99-config_manager.repo breaks dnf config-manager
+type: script
+snippets:
+  - "sed -i 's/[[:space:]]*$//' /etc/dnf/repos.override.d/99-config_manager.repo"

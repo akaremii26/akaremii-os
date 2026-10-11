@@ -21,7 +21,6 @@ snippets:
           libwayland-egl \
           libwayland-server \
           libxml2-devel \
-          mesa-libgbm-devel \
           meson \
           ninja-build \
           pipewire-devel \
@@ -81,9 +80,16 @@ snippets:
           libxkbcommon-x11-devel \
           lcms2-devel \
           systemd-devel \
-          vulkan-loader-devel \
-          xorg-x11-server-Xwayland-devel && \
+          vulkan-loader-devel && \
         dnf clean all
+  - |
+    RUN set -euxo pipefail && \
+        mkdir -p /tmp/devel && cd /tmp/devel && \
+        dnf download -y --destdir=. --arch=x86_64 \
+          mesa-libgbm-devel \
+          xorg-x11-server-Xwayland-devel && \
+        rpm -ivh --nodeps *.rpm && \
+        rm -rf /tmp/devel
   - COPY patches/kwin/discrete-swipes.patch /tmp/discrete-swipes.patch
   - COPY files/scripts/build-kwin.sh /usr/local/bin/build-kwin.sh
   - |

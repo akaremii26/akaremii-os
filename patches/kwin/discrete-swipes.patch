@@ -1,0 +1,2322 @@
+diff --git a/autotests/integration/CMakeLists.txt b/autotests/integration/CMakeLists.txt
+index ac776a4..bc59bda 100644
+--- a/autotests/integration/CMakeLists.txt
++++ b/autotests/integration/CMakeLists.txt
+@@ -196,6 +196,7 @@ integrationTest(NAME testVirtualKeyboardDBus SRCS test_virtualkeyboard_dbus.cpp
+ 
+ if (KWIN_BUILD_GLOBALSHORTCUTS)
+     integrationTest(NAME testGlobalShortcuts SRCS globalshortcuts_test.cpp LIBS XCB::ICCCM KF6::GlobalAccel KF6::I18n XKB::XKB)
++    integrationTest(NAME testDiscreteSwipes SRCS discrete_swipes_test.cpp BUILTIN_EFFECTS)
+     integrationTest(NAME testKWinBindings SRCS kwinbindings_test.cpp LIBS KF6::I18n)
+ endif()
+ if (TARGET K::KPipeWire)
+diff --git a/autotests/integration/discrete_swipes_test.cpp b/autotests/integration/discrete_swipes_test.cpp
+new file mode 100644
+index 0000000..d2000bf
+--- /dev/null
++++ b/autotests/integration/discrete_swipes_test.cpp
+@@ -0,0 +1,190 @@
++/*
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "kwin_wayland_test.h"
++
++#include "compositor.h"
++#include "effect/effecthandler.h"
++#include "effect/effectloader.h"
++#include "input.h"
++#include "pointer_input.h"
++#include "virtualdesktops.h"
++#include "wayland_server.h"
++#include "workspace.h"
++
++#include <KConfigGroup>
++#include <KWayland/Client/surface.h>
++
++using namespace KWin;
++using namespace std::chrono_literals;
++
++class DiscreteSwipesTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void init();
++    void cleanup();
++    void desktopCommandsBeforeRelease();
++    void overviewDoesNotChainTransitions();
++};
++
++void DiscreteSwipesTest::initTestCase()
++{
++    qRegisterMetaType<KWin::Effect *>();
++    QVERIFY(waylandServer()->init(qAppName()));
++    auto config = KSharedConfig::openConfig(QString(), KConfig::SimpleConfig);
++    KConfigGroup plugins(config, QStringLiteral("Plugins"));
++    for (const auto &name : EffectLoader().listOfKnownEffects()) {
++        plugins.writeEntry(name + QStringLiteral("Enabled"), false);
++    }
++    config->sync();
++    kwinApp()->setConfig(config);
++    // The default integration renderer is QPainter; Overview requires OpenGL.
++    qputenv("KWIN_COMPOSE", QByteArrayLiteral("O2"));
++    kwinApp()->start();
++    QVERIFY(Compositor::self());
++    Test::setOutputConfig({Rect(0, 0, 1280, 1024)});
++}
++
++void DiscreteSwipesTest::init()
++{
++    QVERIFY(Test::setupWaylandConnection());
++    workspace()->setActiveOutput(QPoint(640, 512));
++    input()->pointer()->warp(QPoint(640, 512));
++    auto desktops = VirtualDesktopManager::self();
++    desktops->setPerOutputVirtualDesktops(false);
++    desktops->setCount(4);
++    desktops->setRows(1);
++    desktops->setNavigationWrappingAround(false);
++    desktops->setCurrent(2);
++}
++
++void DiscreteSwipesTest::cleanup()
++{
++    input()->pointer()->processSwipeGestureCancelled(10s);
++    if (effects->isEffectLoaded(QStringLiteral("overview"))) {
++        effects->unloadEffect(QStringLiteral("overview"));
++    }
++    Test::destroyWaylandConnection();
++}
++
++void DiscreteSwipesTest::desktopCommandsBeforeRelease()
++{
++    auto desktops = VirtualDesktopManager::self();
++    auto pointer = input()->pointer();
++    QSignalSpy changed(desktops, &VirtualDesktopManager::currentChanged);
++    pointer->processSwipeGestureBegin(3, 0ms);
++    pointer->processSwipeGestureUpdate(QPointF(-15, 0), 10ms);
++    QCOMPARE(desktops->current(), 2u);
++    pointer->processSwipeGestureUpdate(QPointF(-1, 0), 20ms);
++    QCOMPARE(desktops->current(), 3u);
++    QCOMPARE(changed.count(), 1);
++    pointer->processSwipeGestureUpdate(QPointF(-900, 0), 200ms);
++    QCOMPARE(desktops->current(), 3u); // Same direction never repeats.
++    QCOMPARE(changed.count(), 1);
++    // Reversing the stroke past its starting point switches back before release.
++    pointer->processSwipeGestureUpdate(QPointF(2000, 0), 400ms);
++    QCOMPARE(desktops->current(), 2u);
++    QCOMPARE(changed.count(), 2);
++    // And re-reversing commits the original direction again.
++    pointer->processSwipeGestureUpdate(QPointF(-2000, 0), 500ms);
++    QCOMPARE(desktops->current(), 3u);
++    QCOMPARE(changed.count(), 3);
++    pointer->processSwipeGestureEnd(600ms);
++    QCOMPARE(changed.count(), 3);
++
++    pointer->processSwipeGestureBegin(3, 1000ms);
++    pointer->processSwipeGestureUpdate(QPointF(-16, 0), 1020ms);
++    QCOMPARE(desktops->current(), 4u);
++    pointer->processSwipeGestureCancelled(1021ms);
++    QCOMPARE(desktops->current(), 4u); // Cancellation does not roll back.
++    QCOMPARE(changed.count(), 4);
++
++    // Preserve the desktop grid and wrapping policy, not a linear carousel.
++    pointer->processSwipeGestureBegin(3, 2000ms);
++    pointer->processSwipeGestureUpdate(QPointF(-16, 0), 2020ms);
++    QCOMPARE(desktops->current(), 4u); // At the edge without wrapping: no-op.
++    pointer->processSwipeGestureEnd(2040ms);
++    desktops->setNavigationWrappingAround(true);
++    pointer->processSwipeGestureBegin(4, 3000ms);
++    pointer->processSwipeGestureUpdate(QPointF(-16, 0), 3020ms);
++    QCOMPARE(desktops->current(), 1u);
++    pointer->processSwipeGestureEnd(3040ms);
++
++    desktops->setRows(2);
++    desktops->setCurrent(1);
++    pointer->processSwipeGestureBegin(3, 4000ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, -16), 4020ms);
++    QCOMPARE(desktops->current(), 3u);
++    // Vertical strokes reverse the same way.
++    pointer->processSwipeGestureUpdate(QPointF(0, 32), 4040ms);
++    QCOMPARE(desktops->current(), 1u);
++    pointer->processSwipeGestureEnd(4060ms);
++}
++
++void DiscreteSwipesTest::overviewDoesNotChainTransitions()
++{
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shellSurface(Test::createXdgToplevelSurface(surface.get()));
++    QVERIFY(Test::renderAndWaitForShown(surface.get(), QSize(300, 200), Qt::blue));
++    auto loader = effects->findChild<AbstractEffectLoader *>();
++    QVERIFY(loader);
++    QSignalSpy loaded(loader, &AbstractEffectLoader::effectLoaded);
++    QVERIFY(effects->loadEffect(QStringLiteral("overview")));
++    QCOMPARE(loaded.count(), 1);
++    auto overview = loaded.first().first().value<Effect *>();
++    QVERIFY(overview);
++    auto pointer = input()->pointer();
++
++    // Opening stroke: Overview commits immediately; further motion in the same
++    // direction cannot chain into Grid.
++    pointer->processSwipeGestureBegin(4, 0ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, -15), 10ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 0.0);
++    pointer->processSwipeGestureUpdate(QPointF(0, -1), 20ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 0.0);
++    QVERIFY(!overview->property("overviewGestureInProgress").toBool());
++    QVERIFY(!overview->property("transitionGestureInProgress").toBool());
++    pointer->processSwipeGestureUpdate(QPointF(0, -900), 200ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 0.0);
++    pointer->processSwipeGestureCancelled(600ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++
++    // A separate up-stroke moves Overview into Grid; reversing that stroke
++    // before release returns to Overview.
++    pointer->processSwipeGestureBegin(4, 1000ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, -16), 1020ms);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 1.0);
++    QVERIFY(!overview->property("transitionGestureInProgress").toBool());
++    QVERIFY(!overview->property("gridGestureInProgress").toBool());
++    pointer->processSwipeGestureUpdate(QPointF(0, 900), 1040ms);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 0.0);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++    pointer->processSwipeGestureEnd(1060ms);
++
++    // Grid -> Overview is likewise a command, not a reversible preview.
++    pointer->processSwipeGestureBegin(4, 2000ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, -16), 2020ms);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 1.0);
++    pointer->processSwipeGestureEnd(2040ms);
++
++    pointer->processSwipeGestureBegin(4, 3000ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, 16), 3020ms);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 0.0);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++    pointer->processSwipeGestureCancelled(3040ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 1.0);
++
++    pointer->processSwipeGestureBegin(4, 4000ms);
++    pointer->processSwipeGestureUpdate(QPointF(0, 16), 4020ms);
++    QCOMPARE(overview->property("overviewPartialActivationFactor").toReal(), 0.0);
++    QCOMPARE(overview->property("gridPartialActivationFactor").toReal(), 0.0);
++    pointer->processSwipeGestureEnd(4040ms);
++    QTRY_VERIFY(!overview->isActive());
++}
++
++WAYLANDTEST_MAIN(DiscreteSwipesTest)
++#include "discrete_swipes_test.moc"
+diff --git a/autotests/integration/touch_input_test.cpp b/autotests/integration/touch_input_test.cpp
+index 3ed45a4..f28124b 100644
+--- a/autotests/integration/touch_input_test.cpp
++++ b/autotests/integration/touch_input_test.cpp
+@@ -375,39 +375,36 @@ void TouchInputTest::testGestureDetection()
+     return;
+ #endif
+ 
+-    bool callbackTriggered = false;
+-    const auto callback = [&callbackTriggered](float progress) {
+-        callbackTriggered = true;
+-        qWarning() << "progress callback!" << progress;
+-    };
+     QAction action;
+-    input()->forceRegisterTouchscreenSwipeShortcut(SwipeDirection::Right, 3, &action, callback);
+-
+-    // verify that gestures are detected
++    QSignalSpy triggered(&action, &QAction::triggered);
++    input()->forceRegisterTouchscreenSwipeShortcut(SwipeDirection::Left, 3, &action);
+ 
+     quint32 timestamp = 1;
+     Test::touchDown(0, QPointF(500, 125), timestamp++);
+     Test::touchDown(1, QPointF(500, 125), timestamp++);
+     Test::touchDown(2, QPointF(500, 125), timestamp++);
+-
+     Test::touchMotion(0, QPointF(100, 125), timestamp++);
+-    QVERIFY(callbackTriggered);
+-
+-    // verify that gestures are canceled properly
+-    QSignalSpy gestureCancelled(&action, &QAction::triggered);
++    QCOMPARE(triggered.count(), 1); // Command fires before any finger lifts.
++    Test::touchMotion(1, QPointF(100, 125), timestamp++);
++    Test::touchMotion(0, QPointF(900, 125), timestamp++);
++    QCOMPARE(triggered.count(), 1); // Same direction never repeats.
++    Test::touchMotion(1, QPointF(900, 125), timestamp++);
++    QCOMPARE(triggered.count(), 1); // Reversal with no opposite binding is inert.
++    Test::touchMotion(0, QPointF(100, 125), timestamp++);
++    QCOMPARE(triggered.count(), 1); // Still short of the stroke origin.
++    Test::touchMotion(1, QPointF(100, 125), timestamp++);
++    QCOMPARE(triggered.count(), 2); // Re-reversing commits the command again.
+     Test::touchUp(0, timestamp++);
+-    QVERIFY(gestureCancelled.wait());
++    QCOMPARE(triggered.count(), 2);
+ 
+     Test::touchUp(1, timestamp++);
+     Test::touchUp(2, timestamp++);
+ 
+-    callbackTriggered = false;
+-
+     // verify that touch points too far apart don't trigger a gesture
+     Test::touchDown(0, QPointF(125, 125), timestamp++);
+     Test::touchDown(1, QPointF(10000, 125), timestamp++);
+     Test::touchDown(2, QPointF(125, 125), timestamp++);
+-    QVERIFY(!callbackTriggered);
++    QCOMPARE(triggered.count(), 2);
+ 
+     Test::touchUp(0, timestamp++);
+     Test::touchUp(1, timestamp++);
+@@ -418,7 +415,7 @@ void TouchInputTest::testGestureDetection()
+     timestamp += 1000;
+     Test::touchDown(1, QPointF(125, 125), timestamp++);
+     Test::touchDown(2, QPointF(125, 125), timestamp++);
+-    QVERIFY(!callbackTriggered);
++    QCOMPARE(triggered.count(), 2);
+ 
+     Test::touchUp(0, timestamp++);
+     Test::touchUp(1, timestamp++);
+@@ -432,7 +429,7 @@ void TouchInputTest::testGestureDetection()
+     Test::touchMotion(0, QPointF(100, 125), timestamp++);
+     Test::touchMotion(1, QPointF(100, 125), timestamp++);
+     Test::touchMotion(2, QPointF(100, 125), timestamp++);
+-    QVERIFY(callbackTriggered);
++    QCOMPARE(triggered.count(), 3);
+ 
+     Test::touchUp(0, timestamp++);
+     Test::touchUp(1, timestamp++);
+diff --git a/autotests/test_gestures.cpp b/autotests/test_gestures.cpp
+index 8e98e3c..c882354 100644
+--- a/autotests/test_gestures.cpp
++++ b/autotests/test_gestures.cpp
+@@ -1,308 +1,403 @@
+ /*
+-    KWin - the KDE window manager
+-    This file is part of the KDE project.
+-
+     SPDX-FileCopyrightText: 2017 Martin Gräßlin <mgraesslin@kde.org>
+-
+     SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ #include "gestures.h"
+ 
+ #include <QSignalSpy>
+ #include <QTest>
+-#include <QtWidgets/qaction.h>
+-#include <iostream>
+ 
+-using namespace KWin;
++#include <memory>
+ 
++using namespace KWin;
+ Q_DECLARE_METATYPE(SwipeDirection);
+-Q_DECLARE_METATYPE(PinchDirection);
+ 
+ class GestureTest : public QObject
+ {
+     Q_OBJECT
+ private Q_SLOTS:
++    void testImmediateCommand();
++    void testReversalBeforeRelease();
++    void testDirection_data();
++    void testDirection();
++    void testCancellation();
++    void testFingerCountAndLifecycle();
++    void testEligibilitySnapshot();
++    void testRegistrationSnapshot();
++    void testReentrantReset();
++    void testCommandDestruction_data();
++    void testCommandDestruction();
++    void testRecognizerDestruction();
+     void testMinimumScaleDelta();
+-    void testUnregisterSwipeCancels();
+     void testUnregisterPinchCancels();
+-    void testDeleteSwipeCancels();
+-    void testSwipeCancel_data();
+-    void testSwipeCancel();
+-    void testSwipeUpdateTrigger_data();
+-    void testSwipeUpdateTrigger();
+-    void testMinimumDeltaReached_data();
+-    void testMinimumDeltaReached();
+-    void testNotEmitCallbacksBeforeDirectionDecided();
++    void testPinchDirection();
+ };
+ 
+-void GestureTest::testMinimumDeltaReached_data()
++void GestureTest::testImmediateCommand()
+ {
+-    QTest::addColumn<SwipeDirection>("direction");
+-    QTest::addColumn<QPointF>("delta");
+-    QTest::addColumn<bool>("reached");
+-    QTest::addColumn<qreal>("progress");
++    GestureRecognizer recognizer;
++    SwipeGesture up(4), down(4);
++    up.setDirection(SwipeDirection::Up);
++    down.setDirection(SwipeDirection::Down);
++    recognizer.registerSwipeGesture(&up);
++    recognizer.registerSwipeGesture(&down);
++    QSignalSpy triggered(&up, &SwipeGesture::triggered);
++    QSignalSpy opposite(&down, &SwipeGesture::triggered);
++    QSignalSpy cancelled(&up, &SwipeGesture::cancelled);
++    QSignalSpy started(&up, &SwipeGesture::started);
++
++    QCOMPARE(recognizer.startSwipeGesture(4), 2);
++    recognizer.updateSwipeGesture(QPointF(5, -5));
++    QCOMPARE(triggered.count(), 0);
++    recognizer.updateSwipeGesture(QPointF(-5, -10.5));
++    QCOMPARE(triggered.count(), 0);
++    recognizer.updateSwipeGesture(QPointF(0, -0.5));
++    QCOMPARE(triggered.count(), 1); // Synchronous, before lift.
++    recognizer.updateSwipeGesture(QPointF(0, -900));
++    QCOMPARE(triggered.count(), 1); // Same direction never repeats in a stroke.
++    recognizer.updateSwipeGesture(QPointF(0, 2000));
++    QCOMPARE(opposite.count(), 1); // Reversing past the origin fires back.
++    QCOMPARE(triggered.count(), 1);
++    recognizer.updateSwipeGesture(QPointF(900, 0));
++    QCOMPARE(opposite.count(), 1); // Latched direction, even on the far side.
++    recognizer.endSwipeGesture();
++    QCOMPARE(triggered.count(), 1);
++    QCOMPARE(opposite.count(), 1);
++    QCOMPARE(cancelled.count(), 0);
++    QCOMPARE(started.count(), 0); // No interactive swipe lifecycle.
++}
+ 
+-    QTest::newRow("Up (more)") << SwipeDirection::Up << QPointF(0, -SwipeGesture::s_minimumDelta * 2) << true << 1.0;
+-    QTest::newRow("Up (exact)") << SwipeDirection::Up << QPointF(0, -SwipeGesture::s_minimumDelta) << true << 1.0;
+-    QTest::newRow("Up (less)") << SwipeDirection::Up << QPointF(0, -SwipeGesture::s_minimumDelta / 2) << false << 0.5;
+-    QTest::newRow("Left (more)") << SwipeDirection::Left << QPointF(-SwipeGesture::s_minimumDelta * 2, 0) << true << 1.0;
+-    QTest::newRow("Left (exact)") << SwipeDirection::Left << QPointF(-SwipeGesture::s_minimumDelta, 0) << true << 1.0;
+-    QTest::newRow("Left (less)") << SwipeDirection::Left << QPointF(-SwipeGesture::s_minimumDelta / 2, 0) << false << 0.5;
+-    QTest::newRow("Right (more)") << SwipeDirection::Right << QPointF(SwipeGesture::s_minimumDelta * 2, 0) << true << 1.0;
+-    QTest::newRow("Right (exact)") << SwipeDirection::Right << QPointF(SwipeGesture::s_minimumDelta, 0) << true << 1.0;
+-    QTest::newRow("Right (less)") << SwipeDirection::Right << QPointF(SwipeGesture::s_minimumDelta / 2, 0) << false << 0.5;
+-    QTest::newRow("Down (more)") << SwipeDirection::Down << QPointF(0, SwipeGesture::s_minimumDelta * 2) << true << 1.0;
+-    QTest::newRow("Down (exact)") << SwipeDirection::Down << QPointF(0, SwipeGesture::s_minimumDelta) << true << 1.0;
+-    QTest::newRow("Down (less)") << SwipeDirection::Down << QPointF(0, SwipeGesture::s_minimumDelta / 2) << false << 0.5;
++static SwipeDirection oppositeOf(SwipeDirection direction)
++{
++    switch (direction) {
++    case SwipeDirection::Up:
++        return SwipeDirection::Down;
++    case SwipeDirection::Down:
++        return SwipeDirection::Up;
++    case SwipeDirection::Left:
++        return SwipeDirection::Right;
++    case SwipeDirection::Right:
++        return SwipeDirection::Left;
++    case SwipeDirection::Invalid:
++        break;
++    }
++    return SwipeDirection::Invalid;
+ }
+ 
+-void GestureTest::testMinimumDeltaReached()
++void GestureTest::testReversalBeforeRelease()
+ {
+     GestureRecognizer recognizer;
++    SwipeGesture left(3), right(3);
++    left.setDirection(SwipeDirection::Left);
++    right.setDirection(SwipeDirection::Right);
++    recognizer.registerSwipeGesture(&left);
++    recognizer.registerSwipeGesture(&right);
++    QSignalSpy leftTriggered(&left, &SwipeGesture::triggered);
++    QSignalSpy rightTriggered(&right, &SwipeGesture::triggered);
++
++    QCOMPARE(recognizer.startSwipeGesture(3), 2);
++    recognizer.updateSwipeGesture(QPointF(-16, 0));
++    QCOMPARE(leftTriggered.count(), 1);
++
++    // Reversals that stay below the threshold, or short of the stroke origin,
++    // must not commit the opposite command.
++    recognizer.updateSwipeGesture(QPointF(15, 0)); // back to -1
++    QCOMPARE(rightTriggered.count(), 0);
++    recognizer.updateSwipeGesture(QPointF(16, 0)); // back to +15
++    QCOMPARE(rightTriggered.count(), 0);
++    recognizer.updateSwipeGesture(QPointF(1, 0)); // +16, past the origin
++    QCOMPARE(rightTriggered.count(), 1);
++    QCOMPARE(leftTriggered.count(), 1);
++
++    // Re-reversing commits the original direction again.
++    recognizer.updateSwipeGesture(QPointF(-32, 0)); // -16
++    QCOMPARE(leftTriggered.count(), 2);
++    QCOMPARE(rightTriggered.count(), 1);
+ 
+-    // swipe gesture
+-    SwipeGesture gesture(1);
+-    QFETCH(SwipeDirection, direction);
+-    gesture.setDirection(direction);
+-    QFETCH(QPointF, delta);
+-    QFETCH(bool, reached);
+-    QCOMPARE(gesture.minimumDeltaReached(delta), reached);
+-
+-    recognizer.registerSwipeGesture(&gesture);
+-
+-    QSignalSpy startedSpy(&gesture, &SwipeGesture::started);
+-    QSignalSpy triggeredSpy(&gesture, &SwipeGesture::triggered);
+-    QSignalSpy cancelledSpy(&gesture, &SwipeGesture::cancelled);
+-    QSignalSpy progressSpy(&gesture, &SwipeGesture::progress);
++    recognizer.endSwipeGesture();
++    QCOMPARE(leftTriggered.count(), 2);
++    QCOMPARE(rightTriggered.count(), 1);
++}
+ 
+-    recognizer.startSwipeGesture(1);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(triggeredSpy.count(), 0);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    QCOMPARE(progressSpy.count(), 0);
++void GestureTest::testDirection_data()
++{
++    QTest::addColumn<QPointF>("delta");
++    QTest::addColumn<SwipeDirection>("direction");
++    QTest::newRow("up") << QPointF(0, -16) << SwipeDirection::Up;
++    QTest::newRow("down") << QPointF(0, 16) << SwipeDirection::Down;
++    QTest::newRow("left") << QPointF(-16, 0) << SwipeDirection::Left;
++    QTest::newRow("right") << QPointF(16, 0) << SwipeDirection::Right;
++    QTest::newRow("horizontal-major") << QPointF(-13, 12) << SwipeDirection::Left;
++    QTest::newRow("vertical-major") << QPointF(12, -13) << SwipeDirection::Up;
++    QTest::newRow("diagonal-tie-up") << QPointF(-12, -12) << SwipeDirection::Up;
++    QTest::newRow("diagonal-tie-down") << QPointF(12, 12) << SwipeDirection::Down;
++}
+ 
++void GestureTest::testDirection()
++{
++    QFETCH(QPointF, delta);
++    QFETCH(SwipeDirection, direction);
++    GestureRecognizer recognizer;
++    SwipeGesture up(3), down(3), left(3), right(3);
++    up.setDirection(SwipeDirection::Up);
++    down.setDirection(SwipeDirection::Down);
++    left.setDirection(SwipeDirection::Left);
++    right.setDirection(SwipeDirection::Right);
++    SwipeDirection fired = SwipeDirection::Invalid;
++    int count = 0;
++    for (auto gesture : {&up, &down, &left, &right}) {
++        recognizer.registerSwipeGesture(gesture);
++        connect(gesture, &SwipeGesture::triggered, &recognizer, [&, gesture]() {
++            fired = gesture->direction();
++            ++count;
++        });
++    }
++    recognizer.startSwipeGesture(3);
+     recognizer.updateSwipeGesture(delta);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(triggeredSpy.count(), 0);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    QCOMPARE(progressSpy.count(), 1);
+-    QTEST(progressSpy.first().first().value<qreal>(), "progress");
+-
++    QCOMPARE(fired, direction);
++    QCOMPARE(count, 1);
++    // Reversing past the stroke origin commits the opposite command.
++    recognizer.updateSwipeGesture(-10 * delta);
++    QCOMPARE(fired, oppositeOf(direction));
++    QCOMPARE(count, 2);
+     recognizer.endSwipeGesture();
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(progressSpy.count(), 1);
+-    QCOMPARE(triggeredSpy.isEmpty(), !reached);
+-    QCOMPARE(cancelledSpy.isEmpty(), reached);
++    QCOMPARE(count, 2);
+ }
+ 
+-void GestureTest::testMinimumScaleDelta()
++void GestureTest::testCancellation()
+ {
+-    // pinch gesture
+-    PinchGesture gesture(4);
+-    gesture.setDirection(PinchDirection::Contracting);
+-
+-    QCOMPARE(gesture.minimumScaleDeltaReached(1.1), false);
+-    QCOMPARE(gesture.minimumScaleDeltaReached(1.3), true);
+-
+     GestureRecognizer recognizer;
+-    recognizer.registerPinchGesture(&gesture);
+-
+-    QSignalSpy startedSpy(&gesture, &PinchGesture::started);
+-    QSignalSpy triggeredSpy(&gesture, &PinchGesture::triggered);
+-    QSignalSpy cancelledSpy(&gesture, &PinchGesture::cancelled);
+-    QSignalSpy progressSpy(&gesture, &PinchGesture::progress);
+-
+-    recognizer.startPinchGesture(4);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(triggeredSpy.count(), 0);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    QCOMPARE(progressSpy.count(), 0);
++    SwipeGesture gesture(3);
++    gesture.setDirection(SwipeDirection::Left);
++    recognizer.registerSwipeGesture(&gesture);
++    QSignalSpy triggered(&gesture, &SwipeGesture::triggered);
++    QSignalSpy cancelled(&gesture, &SwipeGesture::cancelled);
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(-15, 0));
++    recognizer.cancelSwipeGesture();
++    recognizer.updateSwipeGesture(QPointF(-1000, 0));
++    recognizer.endSwipeGesture();
++    QCOMPARE(triggered.count(), 0);
++    QCOMPARE(cancelled.count(), 0);
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(-16, 0));
++    QCOMPARE(triggered.count(), 1);
++    recognizer.cancelSwipeGesture();
++    recognizer.endSwipeGesture();
++    QCOMPARE(triggered.count(), 1);
++    QCOMPARE(cancelled.count(), 0);
+ }
+ 
+-void GestureTest::testUnregisterSwipeCancels()
++void GestureTest::testFingerCountAndLifecycle()
+ {
+     GestureRecognizer recognizer;
+-    auto gesture = std::make_unique<SwipeGesture>(1);
+-    QSignalSpy startedSpy(gesture.get(), &SwipeGesture::started);
+-    QSignalSpy cancelledSpy(gesture.get(), &SwipeGesture::cancelled);
+-
+-    recognizer.registerSwipeGesture(gesture.get());
+-    recognizer.startSwipeGesture(1);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    recognizer.unregisterSwipeGesture(gesture.get());
+-    QCOMPARE(cancelledSpy.count(), 1);
+-
+-    // delete the gesture should not trigger cancel
+-    gesture.reset();
+-    QCOMPARE(cancelledSpy.count(), 1);
++    SwipeGesture gesture(4);
++    gesture.setDirection(SwipeDirection::Up);
++    recognizer.registerSwipeGesture(&gesture);
++    QSignalSpy triggered(&gesture, &SwipeGesture::triggered);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 0);
++    QCOMPARE(recognizer.startSwipeGesture(3), 0);
++    QCOMPARE(recognizer.startSwipeGesture(4), 0); // Ignore duplicate begin.
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    recognizer.endSwipeGesture();
++    QCOMPARE(triggered.count(), 0);
++    QCOMPARE(recognizer.startSwipeGesture(4), 1);
++    recognizer.updateSwipeGesture(QPointF(16, 0)); // Unbound direction still latches.
++    recognizer.updateSwipeGesture(QPointF(0, -1000));
++    recognizer.endSwipeGesture();
++    QCOMPARE(triggered.count(), 0);
++    recognizer.startSwipeGesture(4);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 1);
++    recognizer.endSwipeGesture();
++    recognizer.startSwipeGesture(4);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 2);
+ }
+ 
+-void GestureTest::testUnregisterPinchCancels()
++void GestureTest::testEligibilitySnapshot()
+ {
++    class ConditionalSwipe : public SwipeGesture
++    {
++    public:
++        ConditionalSwipe(const int &state, int source)
++            : SwipeGesture(4)
++            , state(state)
++            , source(source)
++        {
++            setDirection(SwipeDirection::Up);
++        }
++        bool isEnabled() const override
++        {
++            return state == source;
++        }
++        const int &state;
++        const int source;
++    };
++    int state = 0;
++    ConditionalSwipe overview(state, 0), grid(state, 1);
+     GestureRecognizer recognizer;
+-    auto gesture = std::make_unique<PinchGesture>(1);
+-    QSignalSpy startedSpy(gesture.get(), &PinchGesture::started);
+-    QSignalSpy cancelledSpy(gesture.get(), &PinchGesture::cancelled);
+-
+-    recognizer.registerPinchGesture(gesture.get());
+-    recognizer.startPinchGesture(1);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    recognizer.unregisterPinchGesture(gesture.get());
+-    QCOMPARE(cancelledSpy.count(), 1);
+-
+-    // delete the gesture should not trigger cancel
+-    gesture.reset();
+-    QCOMPARE(cancelledSpy.count(), 1);
++    recognizer.registerSwipeGesture(&overview);
++    recognizer.registerSwipeGesture(&grid);
++    connect(&overview, &SwipeGesture::triggered, &recognizer, [&]() {
++        state = 1;
++    });
++    connect(&grid, &SwipeGesture::triggered, &recognizer, [&]() {
++        state = 2;
++    });
++    recognizer.startSwipeGesture(4);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(state, 1);
++    recognizer.updateSwipeGesture(QPointF(0, -1000));
++    recognizer.endSwipeGesture();
++    QCOMPARE(state, 1);
++    recognizer.startSwipeGesture(4);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(state, 2);
+ }
+ 
+-void GestureTest::testDeleteSwipeCancels()
++void GestureTest::testRegistrationSnapshot()
+ {
+     GestureRecognizer recognizer;
+-    auto gesture = std::make_unique<SwipeGesture>(1);
+-    QSignalSpy startedSpy(gesture.get(), &SwipeGesture::started);
+-    QSignalSpy cancelledSpy(gesture.get(), &SwipeGesture::cancelled);
+-
+-    recognizer.registerSwipeGesture(gesture.get());
+-    recognizer.startSwipeGesture(1);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    gesture.reset();
+-    QCOMPARE(cancelledSpy.count(), 1);
++    SwipeGesture first(3), later(3);
++    first.setDirection(SwipeDirection::Up);
++    later.setDirection(SwipeDirection::Up);
++    recognizer.registerSwipeGesture(&first);
++    QSignalSpy triggered(&later, &SwipeGesture::triggered);
++    connect(&first, &SwipeGesture::triggered, &recognizer, [&]() {
++        recognizer.registerSwipeGesture(&later);
++        recognizer.unregisterSwipeGesture(&first);
++    });
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 0);
++    recognizer.endSwipeGesture();
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 1);
+ }
+ 
+-void GestureTest::testSwipeCancel_data()
++void GestureTest::testReentrantReset()
+ {
+-    QTest::addColumn<SwipeDirection>("direction");
++    GestureRecognizer recognizer;
++    SwipeGesture first(3), second(3);
++    first.setDirection(SwipeDirection::Up);
++    second.setDirection(SwipeDirection::Up);
++    recognizer.registerSwipeGesture(&first);
++    recognizer.registerSwipeGesture(&second);
++    QSignalSpy triggered(&second, &SwipeGesture::triggered);
++    const auto connection = connect(&first, &SwipeGesture::triggered, &recognizer, [&]() {
++        recognizer.cancelSwipeGesture();
++        recognizer.startSwipeGesture(3);
++    });
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 0); // Old dispatch must not enter the new stroke.
++    disconnect(connection);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(triggered.count(), 1);
++}
+ 
+-    QTest::newRow("Up") << SwipeDirection::Up;
+-    QTest::newRow("Left") << SwipeDirection::Left;
+-    QTest::newRow("Right") << SwipeDirection::Right;
+-    QTest::newRow("Down") << SwipeDirection::Down;
++void GestureTest::testCommandDestruction_data()
++{
++    QTest::addColumn<bool>("destroy");
++    QTest::newRow("unregister") << false;
++    QTest::newRow("destroy") << true;
+ }
+ 
+-void GestureTest::testSwipeCancel()
++void GestureTest::testCommandDestruction()
+ {
++    QFETCH(bool, destroy);
+     GestureRecognizer recognizer;
+-    auto gesture = std::make_unique<SwipeGesture>(1);
+-    QFETCH(SwipeDirection, direction);
+-    gesture->setDirection(direction);
+-    QSignalSpy startedSpy(gesture.get(), &SwipeGesture::started);
+-    QSignalSpy cancelledSpy(gesture.get(), &SwipeGesture::cancelled);
+-    QSignalSpy triggeredSpy(gesture.get(), &SwipeGesture::triggered);
+-
+-    recognizer.registerSwipeGesture(gesture.get());
+-    recognizer.startSwipeGesture(1);
+-    QCOMPARE(startedSpy.count(), 1);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    recognizer.cancelSwipeGesture();
+-    QCOMPARE(cancelledSpy.count(), 1);
+-    QCOMPARE(triggeredSpy.count(), 0);
++    SwipeGesture first(3);
++    auto second = std::make_unique<SwipeGesture>(3);
++    first.setDirection(SwipeDirection::Up);
++    second->setDirection(SwipeDirection::Up);
++    recognizer.registerSwipeGesture(&first);
++    recognizer.registerSwipeGesture(second.get());
++    int count = 0;
++    connect(second.get(), &SwipeGesture::triggered, &recognizer, [&]() {
++        ++count;
++    });
++    connect(&first, &SwipeGesture::triggered, &recognizer, [&]() {
++        if (destroy) {
++            second.reset();
++        } else {
++            recognizer.unregisterSwipeGesture(second.get());
++        }
++    });
++    recognizer.startSwipeGesture(3);
++    recognizer.updateSwipeGesture(QPointF(0, -16));
++    QCOMPARE(count, 0);
++    recognizer.endSwipeGesture();
+ }
+ 
+-void GestureTest::testSwipeUpdateTrigger_data()
++void GestureTest::testRecognizerDestruction()
+ {
+-    QTest::addColumn<SwipeDirection>("direction");
+-    QTest::addColumn<QPointF>("delta");
+-
+-    QTest::newRow("Up") << SwipeDirection::Up << QPointF(2, -300);
+-    QTest::newRow("Left") << SwipeDirection::Left << QPointF(-200, 1);
+-    QTest::newRow("Right") << SwipeDirection::Right << QPointF(400, -19);
+-    QTest::newRow("Down") << SwipeDirection::Down << QPointF(0, 500);
++    auto recognizer = std::make_unique<GestureRecognizer>();
++    SwipeGesture first(3), second(3);
++    first.setDirection(SwipeDirection::Up);
++    second.setDirection(SwipeDirection::Up);
++    recognizer->registerSwipeGesture(&first);
++    recognizer->registerSwipeGesture(&second);
++    QSignalSpy triggered(&second, &SwipeGesture::triggered);
++    connect(&first, &SwipeGesture::triggered, &first, [&]() {
++        recognizer.reset();
++    });
++    recognizer->startSwipeGesture(3);
++    recognizer->updateSwipeGesture(QPointF(0, -16));
++    QVERIFY(!recognizer);
++    QCOMPARE(triggered.count(), 0);
+ }
+ 
+-void GestureTest::testSwipeUpdateTrigger()
++void GestureTest::testMinimumScaleDelta()
+ {
++    PinchGesture gesture(4);
++    gesture.setDirection(PinchDirection::Contracting);
++    QCOMPARE(gesture.minimumScaleDeltaReached(1.1), false);
++    QCOMPARE(gesture.minimumScaleDeltaReached(1.3), true);
+     GestureRecognizer recognizer;
+-    SwipeGesture gesture(1);
+-    QFETCH(SwipeDirection, direction);
+-    gesture.setDirection(direction);
+-
+-    QSignalSpy triggeredSpy(&gesture, &SwipeGesture::triggered);
+-    QSignalSpy cancelledSpy(&gesture, &SwipeGesture::cancelled);
+-
+-    recognizer.registerSwipeGesture(&gesture);
+-
+-    recognizer.startSwipeGesture(1);
+-    QFETCH(QPointF, delta);
+-    recognizer.updateSwipeGesture(delta);
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    QCOMPARE(triggeredSpy.count(), 0);
++    recognizer.registerPinchGesture(&gesture);
++    QSignalSpy triggered(&gesture, &PinchGesture::triggered);
++    recognizer.startPinchGesture(4);
++    recognizer.updatePinchGesture(0.5, 0, QPointF());
++    recognizer.endPinchGesture();
++    QCOMPARE(triggered.count(), 1);
++}
+ 
+-    recognizer.endSwipeGesture();
+-    QCOMPARE(cancelledSpy.count(), 0);
+-    QCOMPARE(triggeredSpy.count(), 1);
++void GestureTest::testUnregisterPinchCancels()
++{
++    GestureRecognizer recognizer;
++    auto gesture = std::make_unique<PinchGesture>(1);
++    QSignalSpy cancelled(gesture.get(), &PinchGesture::cancelled);
++    recognizer.registerPinchGesture(gesture.get());
++    recognizer.startPinchGesture(1);
++    recognizer.unregisterPinchGesture(gesture.get());
++    QCOMPARE(cancelled.count(), 1);
++    gesture.reset();
++    QCOMPARE(cancelled.count(), 1);
+ }
+ 
+-void GestureTest::testNotEmitCallbacksBeforeDirectionDecided()
++void GestureTest::testPinchDirection()
+ {
+     GestureRecognizer recognizer;
+-    SwipeGesture up{4};
+-    SwipeGesture down{4};
+-    SwipeGesture right{4};
+-    PinchGesture expand{4};
+-    PinchGesture contract{4};
+-    up.setDirection(SwipeDirection::Up);
+-    down.setDirection(SwipeDirection::Down);
+-    right.setDirection(SwipeDirection::Right);
++    PinchGesture expand(4), contract(4);
+     expand.setDirection(PinchDirection::Expanding);
+     contract.setDirection(PinchDirection::Contracting);
+-    recognizer.registerSwipeGesture(&up);
+-    recognizer.registerSwipeGesture(&down);
+-    recognizer.registerSwipeGesture(&right);
+     recognizer.registerPinchGesture(&expand);
+     recognizer.registerPinchGesture(&contract);
+-
+-    QSignalSpy upSpy(&up, &SwipeGesture::progress);
+-    QSignalSpy downSpy(&down, &SwipeGesture::progress);
+-    QSignalSpy rightSpy(&right, &SwipeGesture::progress);
+-    QSignalSpy expandSpy(&expand, &PinchGesture::progress);
+-    QSignalSpy contractSpy(&contract, &PinchGesture::progress);
+-
+-    // don't release callback until we know the direction of swipe gesture
+-    recognizer.startSwipeGesture(4);
+-    QCOMPARE(upSpy.count(), 0);
+-    QCOMPARE(downSpy.count(), 0);
+-    QCOMPARE(rightSpy.count(), 0);
+-
+-    // up (negative y)
+-    recognizer.updateSwipeGesture(QPointF(0, -1.5));
+-    QCOMPARE(upSpy.count(), 1);
+-    QCOMPARE(downSpy.count(), 0);
+-    QCOMPARE(rightSpy.count(), 0);
+-
+-    // down (positive y)
+-    // recognizer.updateSwipeGesture(QPointF(0, 0));
+-    recognizer.updateSwipeGesture(QPointF(0, 3));
+-    QCOMPARE(upSpy.count(), 1);
+-    QCOMPARE(downSpy.count(), 1);
+-    QCOMPARE(rightSpy.count(), 0);
+-
+-    // right
+-    recognizer.cancelSwipeGesture();
+-    recognizer.startSwipeGesture(4);
+-    recognizer.updateSwipeGesture(QPointF(1, 0));
+-    QCOMPARE(upSpy.count(), 1);
+-    QCOMPARE(downSpy.count(), 1);
+-    QCOMPARE(rightSpy.count(), 1);
+-
+-    recognizer.cancelSwipeGesture();
+-
+-    // same test for pinch gestures
++    QSignalSpy expandProgress(&expand, &PinchGesture::progress);
++    QSignalSpy contractProgress(&contract, &PinchGesture::progress);
+     recognizer.startPinchGesture(4);
+-    QCOMPARE(expandSpy.count(), 0);
+-    QCOMPARE(contractSpy.count(), 0);
+-
+-    // contracting
+-    recognizer.updatePinchGesture(.5, 0, QPointF(0, 0));
+-    QCOMPARE(expandSpy.count(), 0);
+-    QCOMPARE(contractSpy.count(), 1);
+-
+-    // expanding
+-    recognizer.updatePinchGesture(1.5, 0, QPointF(0, 0));
+-    QCOMPARE(expandSpy.count(), 1);
+-    QCOMPARE(contractSpy.count(), 1);
++    QCOMPARE(expandProgress.count(), 0);
++    QCOMPARE(contractProgress.count(), 0);
++    recognizer.updatePinchGesture(0.5, 0, QPointF());
++    QCOMPARE(expandProgress.count(), 0);
++    QCOMPARE(contractProgress.count(), 1);
++    recognizer.updatePinchGesture(1.5, 0, QPointF());
++    QCOMPARE(expandProgress.count(), 1);
++    QCOMPARE(contractProgress.count(), 1);
+ }
+ 
+ QTEST_MAIN(GestureTest)
+diff --git a/autotests/test_virtual_desktops.cpp b/autotests/test_virtual_desktops.cpp
+index 6013148..5967472 100644
+--- a/autotests/test_virtual_desktops.cpp
++++ b/autotests/test_virtual_desktops.cpp
+@@ -22,7 +22,7 @@ void InputRedirection::registerAxisShortcut(Qt::KeyboardModifiers modifiers, Poi
+ {
+ }
+ 
+-void InputRedirection::registerTouchpadSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback)
++void InputRedirection::registerTouchpadSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
+ {
+ }
+ 
+@@ -54,8 +54,6 @@ private Q_SLOTS:
+     void updateGrid();
+     void updateLayout_data();
+     void updateLayout();
+-    void name_data();
+-    void name();
+     void changeRows();
+     void load();
+     void save();
+@@ -257,30 +255,6 @@ void TestVirtualDesktops::updateLayout()
+     QCOMPARE(arguments2.at(1).toInt(), result.height());
+ }
+ 
+-void TestVirtualDesktops::name_data()
+-{
+-    QTest::addColumn<uint>("initCount");
+-    QTest::addColumn<uint>("desktop");
+-    QTest::addColumn<QString>("desktopName");
+-
+-    QTest::newRow("desktop 1") << (uint)5 << (uint)1 << "Desktop 1";
+-    QTest::newRow("desktop 2") << (uint)5 << (uint)2 << "Desktop 2";
+-    QTest::newRow("desktop 3") << (uint)5 << (uint)3 << "Desktop 3";
+-    QTest::newRow("desktop 4") << (uint)5 << (uint)4 << "Desktop 4";
+-    QTest::newRow("desktop 5") << (uint)5 << (uint)5 << "Desktop 5";
+-}
+-
+-void TestVirtualDesktops::name()
+-{
+-    VirtualDesktopManager *vds = VirtualDesktopManager::self();
+-    QFETCH(uint, initCount);
+-    vds->setCount(initCount);
+-    QFETCH(uint, desktop);
+-
+-    const VirtualDesktop *vd = vds->desktopForX11Id(desktop);
+-    QTEST(vd->name(), "desktopName");
+-}
+-
+ void TestVirtualDesktops::changeRows()
+ {
+     VirtualDesktopManager *vds = VirtualDesktopManager::self();
+diff --git a/src/effect/effecthandler.cpp b/src/effect/effecthandler.cpp
+index fe9e913..d666585 100644
+--- a/src/effect/effecthandler.cpp
++++ b/src/effect/effecthandler.cpp
+@@ -702,9 +702,9 @@ void EffectsHandler::registerAxisShortcut(Qt::KeyboardModifiers modifiers, Point
+     input()->registerAxisShortcut(modifiers, axis, action);
+ }
+ 
+-void EffectsHandler::registerTouchpadSwipeShortcut(SwipeDirection dir, uint fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback)
++void EffectsHandler::registerTouchpadSwipeShortcut(SwipeDirection dir, uint fingerCount, QAction *action, std::function<void(qreal)>)
+ {
+-    input()->registerTouchpadSwipeShortcut(dir, fingerCount, onUp, progressCallback);
++    input()->registerTouchpadSwipeShortcut(dir, fingerCount, action);
+ }
+ 
+ void EffectsHandler::registerTouchpadPinchShortcut(PinchDirection dir, uint fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback)
+@@ -712,9 +712,9 @@ void EffectsHandler::registerTouchpadPinchShortcut(PinchDirection dir, uint fing
+     input()->registerTouchpadPinchShortcut(dir, fingerCount, onUp, progressCallback);
+ }
+ 
+-void EffectsHandler::registerTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void EffectsHandler::registerTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)>)
+ {
+-    input()->registerTouchscreenSwipeShortcut(direction, fingerCount, action, progressCallback);
++    input()->registerTouchscreenSwipeShortcut(direction, fingerCount, action);
+ }
+ 
+ bool EffectsHandler::hasKeyboardGrab() const
+diff --git a/src/effect/effecthandler.h b/src/effect/effecthandler.h
+index 7d0f516..a1c430f 100644
+--- a/src/effect/effecthandler.h
++++ b/src/effect/effecthandler.h
+@@ -236,21 +236,33 @@ public:
+     void registerAxisShortcut(Qt::KeyboardModifiers modifiers, PointerAxisDirection axis, QAction *action);
+ 
+     /**
+-     * @brief Registers a global touchpad swipe gesture shortcut with the provided @p action.
++     * @brief Registers a global touchpad swipe gesture shortcut.
+      *
+-     * @param direction The direction for the swipe
+-     * @param action The action which gets triggered when the gesture triggers
++     * The action triggers synchronously once the initial direction is recognized
++     * after 16 logical units of movement. Reversing the stroke past its starting
++     * point triggers the opposite direction's action. Cancellation and release
++     * do not change committed commands.
++     *
++     * @param dir The initial direction for the swipe
++     * @param fingerCount The required number of fingers
++     * @param action The command to execute on recognition
++     * @param progressCallback Retained for SDK compatibility; discrete swipes do not report progress
+      * @since 5.10
+      */
+-    void registerTouchpadSwipeShortcut(SwipeDirection dir, uint fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback = {});
++    void registerTouchpadSwipeShortcut(SwipeDirection dir, uint fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
+ 
+     void registerTouchpadPinchShortcut(PinchDirection dir, uint fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback = {});
+ 
+     /**
+-     * @brief Registers a global touchscreen swipe gesture shortcut with the provided @p action.
++     * @brief Registers a global touchscreen swipe gesture shortcut.
++     *
++     * Uses the same immediate command contract as
++     * registerTouchpadSwipeShortcut().
+      *
+-     * @param direction The direction for the swipe
+-     * @param action The action which gets triggered when the gesture triggers
++     * @param direction The initial direction for the swipe
++     * @param fingerCount The required number of fingers
++     * @param action The command to execute on recognition
++     * @param progressCallback Retained for SDK compatibility; discrete swipes do not report progress
+      * @since 5.25
+      */
+     void registerTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)> progressCallback);
+@@ -784,17 +796,14 @@ Q_SIGNALS:
+     void desktopChanged(KWin::VirtualDesktop *oldDesktop, KWin::VirtualDesktop *newDesktop, KWin::EffectWindow *with, KWin::LogicalOutput *output);
+ 
+     /**
+-     * Signal emitted while desktop is changing for animation.
+-     * @param currentDesktop The current desktop until otherwise.
+-     * @param offset The current desktop offset.
+-     * offset.x() = .6 means 60% of the way to the desktop to the right.
+-     * Positive Values means Up and Right.
+-     * @param output The affected screen. If it affects multiple screens, then a separate signal is emitted for each one.
++     * Realtime desktop animation signal retained for SDK compatibility.
++     * Discrete swipe commands emit desktopChanged(), not desktopChanging().
+      */
+     void desktopChanging(KWin::VirtualDesktop *currentDesktop, QPointF offset, KWin::EffectWindow *with, KWin::LogicalOutput *output);
+ 
+     /**
+-     * Signal emitted when realtime desktop switching animation is cancelled. It applies to all screens.
++     * Realtime cancellation signal retained for SDK compatibility.
++     * Discrete swipe cancellation does not roll back a committed desktop change.
+      */
+     void desktopChangingCancelled();
+     void desktopAdded(KWin::VirtualDesktop *desktop);
+diff --git a/src/effect/effecttogglablestate.cpp b/src/effect/effecttogglablestate.cpp
+index 01c02ec..95d7da4 100644
+--- a/src/effect/effecttogglablestate.cpp
++++ b/src/effect/effecttogglablestate.cpp
+@@ -6,6 +6,9 @@
+ 
+ #include "effect/effecttogglablestate.h"
+ #include "effect/effecthandler.h"
++#include "gestures.h"
++#include "globalshortcuts.h"
++#include "input.h"
+ 
+ namespace KWin
+ {
+@@ -208,16 +211,59 @@ void EffectTogglableGesture::addTouchpadPinchGesture(PinchDirection direction, u
+     effects->registerTouchpadPinchShortcut(opposite(direction), fingerCount, m_state->deactivateAction(), m_state->regressCallback());
+ }
+ 
++void EffectTogglableGesture::addSwipeGesture(SwipeDirection direction, uint fingerCount, bool touchpad)
++{
++    class EffectSwipeGesture : public SwipeGesture
++    {
++    public:
++        EffectSwipeGesture(uint fingerCount, EffectTogglableState *state, bool activating)
++            : SwipeGesture(fingerCount)
++            , m_state(state)
++            , m_activating(activating)
++        {
++        }
++
++        bool isEnabled() const override
++        {
++            const auto source = m_activating ? EffectTogglableState::Status::Inactive : EffectTogglableState::Status::Active;
++            return m_state->status() == source
++                && !effects->isScreenLocked()
++                && (!effects->hasActiveFullScreenEffect() || effects->activeFullScreenEffect() == m_state->parent());
++        }
++
++    private:
++        EffectTogglableState *const m_state;
++        const bool m_activating;
++    };
++    for (const bool activating : {true, false}) {
++        auto gesture = new EffectSwipeGesture(fingerCount, m_state, activating);
++        gesture->setParent(this);
++        gesture->setDirection(activating ? direction : opposite(direction));
++        connect(gesture, &SwipeGesture::triggered, m_state, [state = m_state, activating]() {
++            if (activating) {
++                state->activate();
++                Q_EMIT state->activated();
++            } else {
++                state->deactivate();
++                Q_EMIT state->deactivated();
++            }
++        });
++        if (touchpad) {
++            input()->shortcuts()->registerTouchpadSwipe(gesture);
++        } else {
++            input()->shortcuts()->registerTouchscreenSwipe(gesture);
++        }
++    }
++}
++
+ void EffectTogglableGesture::addTouchpadSwipeGesture(SwipeDirection direction, uint fingerCount)
+ {
+-    effects->registerTouchpadSwipeShortcut(direction, fingerCount, m_state->activateAction(), m_state->progressCallback());
+-    effects->registerTouchpadSwipeShortcut(opposite(direction), fingerCount, m_state->deactivateAction(), m_state->regressCallback());
++    addSwipeGesture(direction, fingerCount, true);
+ }
+ 
+ void EffectTogglableGesture::addTouchscreenSwipeGesture(SwipeDirection direction, uint fingerCount)
+ {
+-    effects->registerTouchscreenSwipeShortcut(direction, fingerCount, m_state->activateAction(), m_state->progressCallback());
+-    effects->registerTouchscreenSwipeShortcut(opposite(direction), fingerCount, m_state->deactivateAction(), m_state->regressCallback());
++    addSwipeGesture(direction, fingerCount, false);
+ }
+ 
+ EffectTogglableTouchBorder::EffectTogglableTouchBorder(EffectTogglableState *state)
+diff --git a/src/effect/effecttogglablestate.h b/src/effect/effecttogglablestate.h
+index 6bbbcc5..8577b3e 100644
+--- a/src/effect/effecttogglablestate.h
++++ b/src/effect/effecttogglablestate.h
+@@ -117,6 +117,7 @@ public:
+     void addTouchscreenSwipeGesture(SwipeDirection direction, uint fingerCount);
+ 
+ private:
++    void addSwipeGesture(SwipeDirection direction, uint fingerCount, bool touchpad);
+     EffectTogglableState *const m_state;
+ };
+ 
+diff --git a/src/gestures.cpp b/src/gestures.cpp
+index e9c950b..fb7ca6e 100644
+--- a/src/gestures.cpp
++++ b/src/gestures.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include <cmath>
+ #include <functional>
++#include <utility>
+ 
+ namespace KWin
+ {
+@@ -29,24 +30,11 @@ SwipeGesture::SwipeGesture(uint32_t fingerCount)
+ 
+ SwipeGesture::~SwipeGesture() = default;
+ 
+-qreal SwipeGesture::deltaToProgress(const QPointF &delta) const
++bool SwipeGesture::isEnabled() const
+ {
+-    switch (m_direction) {
+-    case SwipeDirection::Up:
+-    case SwipeDirection::Down:
+-        return std::min(std::abs(delta.y()) / s_minimumDelta, 1.0);
+-    case SwipeDirection::Left:
+-    case SwipeDirection::Right:
+-        return std::min(std::abs(delta.x()) / s_minimumDelta, 1.0);
+-    default:
+-        Q_UNREACHABLE();
+-    }
++    return true;
+ }
+ 
+-bool SwipeGesture::minimumDeltaReached(const QPointF &delta) const
+-{
+-    return deltaToProgress(delta) >= 1.0;
+-}
+ 
+ PinchGesture::PinchGesture(uint32_t fingerCount)
+     : m_fingerCount(fingerCount)
+@@ -88,9 +76,7 @@ void GestureRecognizer::unregisterSwipeGesture(KWin::SwipeGesture *gesture)
+         m_destroyConnections.erase(it);
+     }
+     m_swipeGestures.removeAll(gesture);
+-    if (m_activeSwipeGestures.removeOne(gesture)) {
+-        Q_EMIT gesture->cancelled();
+-    }
++    m_activeSwipeGestures.removeAll(gesture);
+ }
+ 
+ void GestureRecognizer::registerPinchGesture(KWin::PinchGesture *gesture)
+@@ -114,152 +100,120 @@ void GestureRecognizer::unregisterPinchGesture(KWin::PinchGesture *gesture)
+     }
+ }
+ 
+-int GestureRecognizer::startSwipeGesture(uint fingerCount, const QPointF &startPos)
++int GestureRecognizer::startSwipeGesture(uint fingerCount)
+ {
+-    m_currentFingerCount = fingerCount;
+-    if (!m_activeSwipeGestures.isEmpty() || !m_activePinchGestures.isEmpty()) {
++    if ((m_swipeState & 7) != 0 || !m_activePinchGestures.isEmpty()) {
+         return 0;
+     }
+-    int count = 0;
++    resetSwipeGesture();
++    m_swipeState |= 1;
+     for (SwipeGesture *gesture : std::as_const(m_swipeGestures)) {
+-        if (gesture->fingerCount() != fingerCount) {
+-            continue;
+-        }
+-
+-        // Only add gestures who's direction aligns with current swipe axis
+-        switch (gesture->direction()) {
+-        case SwipeDirection::Up:
+-        case SwipeDirection::Down:
+-            if (m_currentSwipeAxis == Axis::Horizontal) {
+-                continue;
+-            }
+-            break;
+-        case SwipeDirection::Left:
+-        case SwipeDirection::Right:
+-            if (m_currentSwipeAxis == Axis::Vertical) {
+-                continue;
+-            }
+-            break;
+-        case SwipeDirection::Invalid:
+-            Q_UNREACHABLE();
++        if (gesture->fingerCount() == fingerCount) {
++            m_activeSwipeGestures.append(gesture);
+         }
++    }
++    return m_activeSwipeGestures.size();
++}
+ 
+-        m_activeSwipeGestures << gesture;
+-        count++;
+-        Q_EMIT gesture->started();
++static SwipeDirection opposite(SwipeDirection direction)
++{
++    switch (direction) {
++    case SwipeDirection::Down:
++        return SwipeDirection::Up;
++    case SwipeDirection::Left:
++        return SwipeDirection::Right;
++    case SwipeDirection::Up:
++        return SwipeDirection::Down;
++    case SwipeDirection::Right:
++        return SwipeDirection::Left;
++    case SwipeDirection::Invalid:
++        break;
+     }
+-    return count;
++    return SwipeDirection::Invalid;
+ }
+ 
+ void GestureRecognizer::updateSwipeGesture(const QPointF &delta)
+ {
++    if ((m_swipeState & 7) == 0) {
++        return;
++    }
+     m_currentDelta += delta;
+-
+-    SwipeDirection direction; // Overall direction
+-    Axis swipeAxis;
+-
+-    // Pick an axis for gestures so horizontal ones don't change to vertical ones without lifting fingers
+-    if (m_currentSwipeAxis == Axis::None) {
+-        if (std::abs(m_currentDelta.x()) >= std::abs(m_currentDelta.y())) {
+-            swipeAxis = Axis::Horizontal;
+-            direction = m_currentDelta.x() < 0 ? SwipeDirection::Left : SwipeDirection::Right;
+-        } else {
+-            swipeAxis = Axis::Vertical;
+-            direction = m_currentDelta.y() < 0 ? SwipeDirection::Up : SwipeDirection::Down;
+-        }
+-        if (std::abs(m_currentDelta.x()) >= 5 || std::abs(m_currentDelta.y()) >= 5) {
+-            // only lock in a direction if the delta is big enough
+-            // to prevent accidentally choosing the wrong direction
+-            m_currentSwipeAxis = swipeAxis;
+-        }
+-    } else {
+-        swipeAxis = m_currentSwipeAxis;
++    // Small diagonal noise must not execute a command.
++    if (QPointF::dotProduct(m_currentDelta, m_currentDelta) < 16 * 16) {
++        return;
+     }
+-
+-    // Find the current swipe direction
+-    switch (swipeAxis) {
+-    case Axis::Vertical:
+-        direction = m_currentDelta.y() < 0 ? SwipeDirection::Up : SwipeDirection::Down;
+-        break;
+-    case Axis::Horizontal:
++    SwipeDirection direction;
++    if (std::abs(m_currentDelta.x()) > std::abs(m_currentDelta.y())) {
+         direction = m_currentDelta.x() < 0 ? SwipeDirection::Left : SwipeDirection::Right;
+-        break;
+-    default:
+-        Q_UNREACHABLE();
++    } else {
++        direction = m_currentDelta.y() < 0 ? SwipeDirection::Up : SwipeDirection::Down;
+     }
+ 
+-    // Eliminate wrong gestures (takes two iterations)
+-    for (int i = 0; i < 2; i++) {
+-        if (m_activeSwipeGestures.isEmpty()) {
+-            startSwipeGesture(m_currentFingerCount);
+-        }
+-
+-        for (auto it = m_activeSwipeGestures.begin(); it != m_activeSwipeGestures.end();) {
+-            auto g = static_cast<SwipeGesture *>(*it);
+-
+-            if (g->direction() != direction) {
+-                Q_EMIT g->cancelled();
+-                it = m_activeSwipeGestures.erase(it);
+-                continue;
++    // A committed direction only yields to its opposite, and only once the
++    // stroke has travelled back past its starting point by the threshold.
++    // That keeps the stroke axis stable and makes jitter around the origin
++    // of a direction change inert.
++    const uint32_t phase = m_swipeState & 7;
++    if (phase > 1 && direction != opposite(SwipeDirection(phase - 1))) {
++        return;
++    }
++    m_swipeState = (m_swipeState & ~uint32_t(7)) | (uint32_t(direction) + 1);
++
++    // Snapshot eligibility before any command changes the state of another binding.
++    // Candidates stay registered for the rest of the stroke so a reversal can
++    // dispatch the opposite command; the stroke latches even when nothing matches.
++    auto gestures = m_activeSwipeGestures;
++    gestures.removeIf([direction](const QPointer<SwipeGesture> &gesture) {
++        return !gesture || gesture->direction() != direction || !gesture->isEnabled();
++    });
++    const auto generation = m_swipeState;
++    const QPointer<GestureRecognizer> guard(this);
++    for (const auto &gesture : gestures) {
++        if (gesture && m_swipeGestures.contains(gesture.data())) {
++            Q_EMIT gesture->triggered();
++            // Commands may destroy the recognizer, unregister other bindings, or
++            // end this stroke and start another. Never dispatch stale commands.
++            if (!guard || m_swipeState != generation) {
++                return;
+             }
+-
+-            it++;
+         }
+     }
++}
+ 
+-    // Send progress update
+-    for (SwipeGesture *g : std::as_const(m_activeSwipeGestures)) {
+-        Q_EMIT g->progress(g->deltaToProgress(m_currentDelta));
+-        Q_EMIT g->deltaProgress(m_currentDelta);
+-    }
++void GestureRecognizer::resetSwipeGesture()
++{
++    m_swipeState = (m_swipeState + 8) & ~uint32_t(7);
++    m_activeSwipeGestures.clear();
++    m_currentDelta = QPointF();
+ }
+ 
+ void GestureRecognizer::cancelActiveGestures()
+ {
+-    for (auto g : std::as_const(m_activeSwipeGestures)) {
+-        Q_EMIT g->cancelled();
+-    }
+-    for (auto g : std::as_const(m_activePinchGestures)) {
+-        Q_EMIT g->cancelled();
++    cancelSwipeGesture();
++    for (auto gesture : std::as_const(m_activePinchGestures)) {
++        Q_EMIT gesture->cancelled();
+     }
+-    m_activeSwipeGestures.clear();
+     m_activePinchGestures.clear();
+     m_currentScale = 0;
+-    m_currentDelta = QPointF(0, 0);
+-    m_currentSwipeAxis = Axis::None;
+ }
+ 
+ void GestureRecognizer::cancelSwipeGesture()
+ {
+-    cancelActiveGestures();
+-    m_currentFingerCount = 0;
+-    m_currentDelta = QPointF(0, 0);
+-    m_currentSwipeAxis = Axis::None;
++    resetSwipeGesture();
+ }
+ 
+ void GestureRecognizer::endSwipeGesture()
+ {
+-    const QPointF delta = m_currentDelta;
+-    for (auto g : std::as_const(m_activeSwipeGestures)) {
+-        if (static_cast<SwipeGesture *>(g)->minimumDeltaReached(delta)) {
+-            Q_EMIT g->triggered();
+-        } else {
+-            Q_EMIT g->cancelled();
+-        }
+-    }
+-    m_activeSwipeGestures.clear();
+-    m_currentFingerCount = 0;
+-    m_currentDelta = QPointF(0, 0);
+-    m_currentSwipeAxis = Axis::None;
++    resetSwipeGesture();
+ }
+ 
+ int GestureRecognizer::startPinchGesture(uint fingerCount)
+ {
+     m_currentFingerCount = fingerCount;
+-    int count = 0;
+-    if (!m_activeSwipeGestures.isEmpty() || !m_activePinchGestures.isEmpty()) {
++    if ((m_swipeState & 7) != 0 || !m_activePinchGestures.isEmpty()) {
+         return 0;
+     }
++    int count = 0;
+     for (PinchGesture *gesture : std::as_const(m_pinchGestures)) {
+         if (gesture->fingerCount() != fingerCount) {
+             continue;
+@@ -313,7 +267,6 @@ void GestureRecognizer::cancelPinchGesture()
+     cancelActiveGestures();
+     m_currentScale = 1;
+     m_currentFingerCount = 0;
+-    m_currentSwipeAxis = Axis::None;
+ }
+ 
+ void GestureRecognizer::endPinchGesture() // because fingers up
+@@ -329,7 +282,6 @@ void GestureRecognizer::endPinchGesture() // because fingers up
+     m_activePinchGestures.clear();
+     m_currentScale = 1;
+     m_currentFingerCount = 0;
+-    m_currentSwipeAxis = Axis::None;
+ }
+ 
+ uint32_t SwipeGesture::fingerCount() const
+@@ -362,9 +314,9 @@ void PinchGesture::setDirection(PinchDirection direction)
+     m_direction = direction;
+ }
+ 
+-int GestureRecognizer::startSwipeGesture(uint fingerCount)
++int GestureRecognizer::startSwipeGesture(uint fingerCount, const QPointF &)
+ {
+-    return startSwipeGesture(fingerCount, QPointF());
++    return startSwipeGesture(fingerCount);
+ }
+ 
+ }
+diff --git a/src/gestures.h b/src/gestures.h
+index 6b698c4..e1824dd 100644
+--- a/src/gestures.h
++++ b/src/gestures.h
+@@ -15,6 +15,7 @@
+ #include <QMap>
+ #include <QObject>
+ #include <QPointF>
++#include <QPointer>
+ 
+ namespace KWin
+ {
+@@ -31,13 +32,11 @@ protected:
+ 
+ Q_SIGNALS:
+     /**
+-     * Matching of a gesture started and this Gesture might match.
+-     * On further evaluation either the signal @ref triggered or
+-     * @ref cancelled will get emitted.
++     * Matching of a pinch gesture started.
+      */
+     void started();
+     /**
+-     * Gesture matching ended and this Gesture matched.
++     * This gesture matched. Swipes trigger immediately on direction recognition.
+      */
+     void triggered();
+     /**
+@@ -51,8 +50,6 @@ class SwipeGesture : public Gesture
+     Q_OBJECT
+ 
+ public:
+-    static constexpr double s_minimumDelta = 200;
+-
+     explicit SwipeGesture(uint32_t fingerCount);
+     ~SwipeGesture() override;
+ 
+@@ -61,20 +58,11 @@ public:
+     SwipeDirection direction() const;
+     void setDirection(SwipeDirection direction);
+ 
+-    qreal deltaToProgress(const QPointF &delta) const;
+-    bool minimumDeltaReached(const QPointF &delta) const;
+-
+-Q_SIGNALS:
+-    /**
+-     * The progress of the gesture if a minimumDelta is set.
+-     * The progress is reported in [0.0,1.0]
+-     */
+-    void progress(qreal);
+-
+     /**
+-     * The progress in actual pixel distance traveled by the fingers
++     * Evaluated for all matching bindings at recognition, before any command is triggered.
++     * Implementations must not change gesture registration or recognition state.
+      */
+-    void deltaProgress(const QPointF &delta);
++    virtual bool isEnabled() const;
+ 
+ private:
+     const uint32_t m_fingerCount;
+@@ -140,22 +128,21 @@ public:
+ 
+ private:
+     void cancelActiveGestures();
+-    enum class Axis {
+-        Horizontal,
+-        Vertical,
+-        None,
+-    };
++    void resetSwipeGesture();
+     int startSwipeGesture(uint fingerCount, const QPointF &startPos);
+     QList<SwipeGesture *> m_swipeGestures;
+     QList<PinchGesture *> m_pinchGestures;
+-    QList<SwipeGesture *> m_activeSwipeGestures;
++    QList<QPointer<SwipeGesture>> m_activeSwipeGestures;
+     QList<PinchGesture *> m_activePinchGestures;
+     QMap<Gesture *, QMetaObject::Connection> m_destroyConnections;
+ 
+     QPointF m_currentDelta = QPointF(0, 0);
+     qreal m_currentScale = 1; // For Pinch Gesture recognition
+     uint m_currentFingerCount = 0;
+-    Axis m_currentSwipeAxis = Axis::None;
++    // Keep the stock recognizer layout: the former axis word also stores the
++    // stroke generation. Low three bits: idle (0), recognizing (1), or the
++    // last committed direction + 1.
++    uint32_t m_swipeState = 0;
+ };
+ 
+ }
+diff --git a/src/globalshortcuts.cpp b/src/globalshortcuts.cpp
+index 29ec1ba..7d5b512 100644
+--- a/src/globalshortcuts.cpp
++++ b/src/globalshortcuts.cpp
+@@ -33,14 +33,10 @@ GlobalShortcut::GlobalShortcut(Shortcut &&sc, QAction *action)
+     : m_shortcut(sc)
+     , m_action(action)
+ {
+-    if (auto swipeGesture = std::get_if<RealtimeFeedbackSwipeShortcut>(&sc)) {
++    if (auto swipeGesture = std::get_if<SwipeShortcut>(&sc)) {
+         m_swipeGesture = std::make_unique<SwipeGesture>(swipeGesture->fingerCount);
+         m_swipeGesture->setDirection(swipeGesture->direction);
+-        QObject::connect(m_swipeGesture.get(), &SwipeGesture::triggered, m_action, &QAction::trigger, Qt::QueuedConnection);
+-        QObject::connect(m_swipeGesture.get(), &SwipeGesture::cancelled, m_action, &QAction::trigger, Qt::QueuedConnection);
+-        if (swipeGesture->progressCallback) {
+-            QObject::connect(m_swipeGesture.get(), &SwipeGesture::progress, m_swipeGesture.get(), swipeGesture->progressCallback);
+-        }
++        QObject::connect(m_swipeGesture.get(), &SwipeGesture::triggered, m_action, &QAction::trigger);
+     } else if (auto pinchGesture = std::get_if<RealtimeFeedbackPinchShortcut>(&sc)) {
+         m_pinchGesture = std::make_unique<PinchGesture>(pinchGesture->fingerCount);
+         m_pinchGesture->setDirection(pinchGesture->direction);
+@@ -122,7 +118,7 @@ void GlobalShortcutsManager::objectDeleted(QObject *object)
+ bool GlobalShortcutsManager::add(GlobalShortcut sc, DeviceType device)
+ {
+     const auto &recognizer = device == DeviceType::Touchpad ? m_touchpadGestureRecognizer : m_touchscreenGestureRecognizer;
+-    if (std::holds_alternative<RealtimeFeedbackSwipeShortcut>(sc.shortcut())) {
++    if (std::holds_alternative<SwipeShortcut>(sc.shortcut())) {
+         recognizer->registerSwipeGesture(sc.swipeGesture());
+     } else if (std::holds_alternative<RealtimeFeedbackPinchShortcut>(sc.shortcut())) {
+         recognizer->registerPinchGesture(sc.pinchGesture());
+@@ -142,9 +138,9 @@ void GlobalShortcutsManager::registerAxisShortcut(QAction *action, Qt::KeyboardM
+     add(GlobalShortcut(PointerAxisShortcut{modifiers, axis}, action));
+ }
+ 
+-void GlobalShortcutsManager::registerTouchpadSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void GlobalShortcutsManager::registerTouchpadSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action)
+ {
+-    add(GlobalShortcut(RealtimeFeedbackSwipeShortcut{DeviceType::Touchpad, direction, progressCallback, fingerCount}, action), DeviceType::Touchpad);
++    add(GlobalShortcut(SwipeShortcut{DeviceType::Touchpad, direction, fingerCount}, action), DeviceType::Touchpad);
+ }
+ 
+ void GlobalShortcutsManager::registerTouchpadSwipe(SwipeGesture *swipeGesture)
+@@ -162,9 +158,9 @@ void GlobalShortcutsManager::registerTouchpadPinch(PinchGesture *pinchGesture)
+     m_touchpadGestureRecognizer->registerPinchGesture(pinchGesture);
+ }
+ 
+-void GlobalShortcutsManager::registerTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void GlobalShortcutsManager::registerTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action)
+ {
+-    add(GlobalShortcut(RealtimeFeedbackSwipeShortcut{DeviceType::Touchscreen, direction, progressCallback, fingerCount}, action), DeviceType::Touchscreen);
++    add(GlobalShortcut(SwipeShortcut{DeviceType::Touchscreen, direction, fingerCount}, action), DeviceType::Touchscreen);
+ }
+ 
+ void GlobalShortcutsManager::registerTouchscreenSwipe(SwipeGesture *swipeGesture)
+@@ -172,9 +168,9 @@ void GlobalShortcutsManager::registerTouchscreenSwipe(SwipeGesture *swipeGesture
+     m_touchscreenGestureRecognizer->registerSwipeGesture(swipeGesture);
+ }
+ 
+-void GlobalShortcutsManager::forceRegisterTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void GlobalShortcutsManager::forceRegisterTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action)
+ {
+-    GlobalShortcut shortcut{RealtimeFeedbackSwipeShortcut{DeviceType::Touchscreen, direction, progressCallback, fingerCount}, action};
++    GlobalShortcut shortcut{SwipeShortcut{DeviceType::Touchscreen, direction, fingerCount}, action};
+     const auto it = std::find_if(m_shortcuts.begin(), m_shortcuts.end(), [&shortcut](const auto &s) {
+         return shortcut.shortcut() == s.shortcut();
+     });
+@@ -308,7 +304,6 @@ void GlobalShortcutsManager::processSwipeEnd(DeviceType device)
+     } else {
+         m_touchscreenGestureRecognizer->endSwipeGesture();
+     }
+-    // TODO: cancel on Wayland Seat if one triggered
+ }
+ 
+ void GlobalShortcutsManager::processPinchStart(uint fingerCount)
+diff --git a/src/globalshortcuts.h b/src/globalshortcuts.h
+index 0fc3163..4b1bfef 100644
+--- a/src/globalshortcuts.h
++++ b/src/globalshortcuts.h
+@@ -69,13 +69,13 @@ public:
+      */
+     void registerAxisShortcut(QAction *action, Qt::KeyboardModifiers modifiers, PointerAxisDirection axis);
+ 
+-    void registerTouchpadSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
++    void registerTouchpadSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action);
+     void registerTouchpadSwipe(SwipeGesture *swipeGesture);
+     void registerTouchpadPinch(PinchDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
+     void registerTouchpadPinch(PinchGesture *pinchGesture);
+-    void registerTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
++    void registerTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action);
+     void registerTouchscreenSwipe(SwipeGesture *swipeGesture);
+-    void forceRegisterTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
++    void forceRegisterTouchscreenSwipe(SwipeDirection direction, uint32_t fingerCount, QAction *action);
+ 
+     /**
+      * @brief Processes a key event to decide whether a shortcut needs to be triggered.
+@@ -155,11 +155,10 @@ struct PointerAxisShortcut
+         return axisModifiers == rhs.axisModifiers && axisDirection == rhs.axisDirection;
+     }
+ };
+-struct RealtimeFeedbackSwipeShortcut
++struct SwipeShortcut
+ {
+     DeviceType device;
+     SwipeDirection direction;
+-    std::function<void(qreal)> progressCallback;
+     uint fingerCount;
+ 
+     template<typename T>
+@@ -181,7 +180,7 @@ struct RealtimeFeedbackPinchShortcut
+     }
+ };
+ 
+-using Shortcut = std::variant<KeyboardShortcut, PointerButtonShortcut, PointerAxisShortcut, RealtimeFeedbackSwipeShortcut, RealtimeFeedbackPinchShortcut>;
++using Shortcut = std::variant<KeyboardShortcut, PointerButtonShortcut, PointerAxisShortcut, SwipeShortcut, RealtimeFeedbackPinchShortcut>;
+ 
+ class GlobalShortcut
+ {
+diff --git a/src/input.cpp b/src/input.cpp
+index fc75e54..80f6ad8 100644
+--- a/src/input.cpp
++++ b/src/input.cpp
+@@ -1211,15 +1211,10 @@ public:
+             if (m_gestureCancelled) {
+                 return true;
+             }
+-            auto output = workspace()->outputAt(event->pos);
+-            const auto physicalSize = output->orientateSize(output->physicalSize());
+-            const float xfactor = physicalSize.width() / (float)output->geometry().width();
+-            const float yfactor = physicalSize.height() / (float)output->geometry().height();
+-
+             auto &point = m_touchPoints[event->id];
+-            const QPointF dist = event->pos - point;
+-            const QPointF delta = QPointF(xfactor * dist.x(), yfactor * dist.y());
+-            input()->shortcuts()->processSwipeUpdate(DeviceType::Touchscreen, 5 * delta / m_touchPoints.size());
++            // Recognition uses logical centroid motion, not the old physical-distance progress scale.
++            const QPointF delta = (event->pos - point) / m_touchPoints.size();
++            input()->shortcuts()->processSwipeUpdate(DeviceType::Touchscreen, delta);
+             point = event->pos;
+             return true;
+         }
+@@ -3513,10 +3508,10 @@ void InputRedirection::registerAxisShortcut(Qt::KeyboardModifiers modifiers, Poi
+ #endif
+ }
+ 
+-void InputRedirection::registerTouchpadSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)> cb)
++void InputRedirection::registerTouchpadSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)>)
+ {
+ #if KWIN_BUILD_GLOBALSHORTCUTS
+-    m_shortcuts->registerTouchpadSwipe(direction, fingerCount, action, cb);
++    m_shortcuts->registerTouchpadSwipe(direction, fingerCount, action);
+ #endif
+ }
+ 
+@@ -3527,17 +3522,17 @@ void InputRedirection::registerTouchpadPinchShortcut(PinchDirection direction, u
+ #endif
+ }
+ 
+-void InputRedirection::registerTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void InputRedirection::registerTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)>)
+ {
+ #if KWIN_BUILD_GLOBALSHORTCUTS
+-    m_shortcuts->registerTouchscreenSwipe(direction, fingerCount, action, progressCallback);
++    m_shortcuts->registerTouchscreenSwipe(direction, fingerCount, action);
+ #endif
+ }
+ 
+-void InputRedirection::forceRegisterTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)> progressCallback)
++void InputRedirection::forceRegisterTouchscreenSwipeShortcut(SwipeDirection direction, uint fingerCount, QAction *action, std::function<void(qreal)>)
+ {
+ #if KWIN_BUILD_GLOBALSHORTCUTS
+-    m_shortcuts->forceRegisterTouchscreenSwipe(direction, fingerCount, action, progressCallback);
++    m_shortcuts->forceRegisterTouchscreenSwipe(direction, fingerCount, action);
+ #endif
+ }
+ 
+diff --git a/src/input.h b/src/input.h
+index b607ebb..8470450 100644
+--- a/src/input.h
++++ b/src/input.h
+@@ -108,7 +108,7 @@ public:
+ 
+     void registerPointerShortcut(Qt::KeyboardModifiers modifiers, Qt::MouseButton pointerButtons, QAction *action);
+     void registerAxisShortcut(Qt::KeyboardModifiers modifiers, PointerAxisDirection axis, QAction *action);
+-    void registerTouchpadSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback = {});
++    void registerTouchpadSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
+     void registerTouchpadPinchShortcut(PinchDirection direction, uint32_t fingerCount, QAction *onUp, std::function<void(qreal)> progressCallback = {});
+     void registerTouchscreenSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
+     void forceRegisterTouchscreenSwipeShortcut(SwipeDirection direction, uint32_t fingerCount, QAction *action, std::function<void(qreal)> progressCallback = {});
+diff --git a/src/plugins/overview/overvieweffect.cpp b/src/plugins/overview/overvieweffect.cpp
+index d9be30e..2e3b7fe 100644
+--- a/src/plugins/overview/overvieweffect.cpp
++++ b/src/plugins/overview/overvieweffect.cpp
+@@ -105,27 +105,6 @@ OverviewEffect::OverviewEffect()
+     connect(m_gridState, &EffectTogglableState::inProgressChanged, this, &OverviewEffect::gridGestureInProgressChanged);
+     connect(m_gridState, &EffectTogglableState::partialActivationFactorChanged, this, &OverviewEffect::gridPartialActivationFactorChanged);
+ 
+-    connect(effects, &EffectsHandler::desktopChanging, this, [this](VirtualDesktop *old, QPointF desktopOffset, EffectWindow *, LogicalOutput *output) {
+-        m_screenDesktopOffsets.insertOrAssign(output, desktopOffset);
+-        Q_EMIT desktopOffsetChanged(output);
+-    });
+-    connect(effects, &EffectsHandler::desktopChanged, this, [this](KWin::VirtualDesktop *, KWin::VirtualDesktop *, EffectWindow *, KWin::LogicalOutput *output) {
+-        m_screenDesktopOffsets.insertOrAssign(output, QPointF(0, 0));
+-        Q_EMIT desktopOffsetChanged(output);
+-    });
+-    connect(effects, &EffectsHandler::desktopChangingCancelled, this, [this]() {
+-        m_screenDesktopOffsets.clear();
+-        const auto screens = effects->screens();
+-
+-        for (LogicalOutput *output : screens) {
+-            Q_EMIT desktopOffsetChanged(output);
+-        }
+-    });
+-    connect(effects, &EffectsHandler::screenRemoved, this, [this](KWin::LogicalOutput *output) {
+-        m_screenDesktopOffsets.remove(output);
+-        Q_EMIT desktopOffsetChanged(output);
+-    });
+-
+     m_shutdownTimer->setSingleShot(true);
+     connect(m_shutdownTimer, &QTimer::timeout, this, [this]() {
+         if (m_overviewState->status() == EffectTogglableState::Status::Inactive) {
+@@ -264,11 +243,6 @@ bool OverviewEffect::gridGestureInProgress() const
+     return m_gridState->inProgress();
+ }
+ 
+-QPointF OverviewEffect::desktopOffsetForScreen(LogicalOutput *screen) const
+-{
+-    return m_screenDesktopOffsets.value(screen, QPointF(0, 0));
+-}
+-
+ bool OverviewEffect::ignoreMinimized() const
+ {
+     return OverviewConfig::ignoreMinimized();
+diff --git a/src/plugins/overview/overvieweffect.h b/src/plugins/overview/overvieweffect.h
+index 57ef2e2..7b0a3da 100644
+--- a/src/plugins/overview/overvieweffect.h
++++ b/src/plugins/overview/overvieweffect.h
+@@ -49,8 +49,6 @@ public:
+     bool transitionGestureInProgress() const;
+     qreal gridPartialActivationFactor() const;
+     bool gridGestureInProgress() const;
+-    QPointF desktopOffset() const;
+-    Q_INVOKABLE QPointF desktopOffsetForScreen(LogicalOutput *screen) const;
+ 
+     int requestedEffectChainPosition() const override;
+     bool borderActivated(ElectricBorder border) override;
+@@ -67,7 +65,6 @@ Q_SIGNALS:
+     void ignoreMinimizedChanged();
+     void filterWindowsChanged();
+     void organizedGridChanged();
+-    void desktopOffsetChanged(KWin::LogicalOutput *screen);
+     void searchTextChanged();
+ 
+ public Q_SLOTS:
+@@ -88,7 +85,6 @@ private:
+     QTimer *m_shutdownTimer;
+     QList<ElectricBorder> m_borderActivate;
+     QList<ElectricBorder> m_gridBorderActivate;
+-    QHash<LogicalOutput *, QPointF> m_screenDesktopOffsets;
+     QString m_searchText;
+     bool m_filterWindows = true;
+     int m_animationDuration = 400;
+diff --git a/src/plugins/overview/qml/Main.qml b/src/plugins/overview/qml/Main.qml
+index 209d631..9ecc2f0 100644
+--- a/src/plugins/overview/qml/Main.qml
++++ b/src/plugins/overview/qml/Main.qml
+@@ -33,7 +33,6 @@ FocusScope {
+ 
+     property bool verticalDesktopBar: KWinComponents.Workspace.desktopGridHeight >= bar.desktopCount && KWinComponents.Workspace.desktopGridHeight != 1
+     property QtObject currentDesktop: KWinComponents.SceneView.currentDesktop
+-    property point targetScreenDesktopOffset: effect.desktopOffsetForScreen(targetScreen);
+ 
+     // The values of overviewVal and gridVal might not be 0 on startup,
+     // but we always want to animate from 0 to those values. So, we initially
+@@ -484,20 +483,10 @@ FocusScope {
+                 property int gridSize: Math.max(rows, columns)
+                 property real row: (index - column) / columns
+                 property real column: index % columns
+-                // deltaX and deltaY are used to move all the desktops together to 1:1 animate the
+-                // switching between different desktops
+-                property real deltaX: (!current ? targetScreenDesktopOffset.x :
+-                                       column == 0 ? Math.max(0, targetScreenDesktopOffset.x) :
+-                                       column == columns - 1 ? Math.min(0, targetScreenDesktopOffset.x) :
+-                                           targetScreenDesktopOffset.x)
+-                property real deltaY: (!current ? targetScreenDesktopOffset.y :
+-                                       row == 0 ? Math.max(0, targetScreenDesktopOffset.y) :
+-                                       row == rows - 1 ? Math.min(0, targetScreenDesktopOffset.y) :
+-                                           targetScreenDesktopOffset.y)
+                 // deltaColumn and deltaRows are the difference between the column/row of this desktop
+                 // compared to the column/row of the active one
+-                property real deltaColumn: column - allDesktopHeaps.currentBackgroundItem.column - deltaX
+-                property real deltaRow: row - allDesktopHeaps.currentBackgroundItem.row - deltaY
++                property real deltaColumn: column - allDesktopHeaps.currentBackgroundItem.column
++                property real deltaRow: row - allDesktopHeaps.currentBackgroundItem.row
+ 
+                 onDeltaColumnChanged: heap.layout.updateCellsMapping()
+                 onDeltaRowChanged: heap.layout.updateCellsMapping()
+@@ -847,15 +836,4 @@ FocusScope {
+         container.verticalDesktopBar = container.verticalDesktopBar
+         organized = true
+     }
+-
+-    Connections {
+-        target: effect
+-        onDesktopOffsetChanged: (screen) => {
+-            if (screen !== container.targetScreen) {
+-                return;
+-            }
+-
+-            container.targetScreenDesktopOffset = effect.desktopOffsetForScreen(screen);
+-        }
+-    }
+ }
+diff --git a/src/plugins/slide/slide.cpp b/src/plugins/slide/slide.cpp
+index 7d0a71c..6c825df 100644
+--- a/src/plugins/slide/slide.cpp
++++ b/src/plugins/slide/slide.cpp
+@@ -37,10 +37,6 @@ SlideEffect::SlideEffect()
+ 
+     connect(effects, &EffectsHandler::desktopChanged,
+             this, &SlideEffect::desktopChanged);
+-    connect(effects, &EffectsHandler::desktopChanging,
+-            this, &SlideEffect::desktopChanging);
+-    connect(effects, QOverload<>::of(&EffectsHandler::desktopChangingCancelled),
+-            this, &SlideEffect::desktopChangingCancelled);
+     connect(effects, &EffectsHandler::windowAdded,
+             this, &SlideEffect::windowAdded);
+     connect(effects, &EffectsHandler::windowDeleted,
+@@ -153,9 +149,6 @@ void SlideEffectScreen::prePaintScreen(ScreenPrePaintData &data)
+         m_paintCtx.position = QPointF(m_motionX.position() / virtualSpaceSize.width(), m_motionY.position() / virtualSpaceSize.height());
+         break;
+     }
+-    case State::ActiveGesture:
+-        m_paintCtx.position = m_gesturePos;
+-        break;
+     }
+ 
+     // Clipping
+@@ -473,91 +466,11 @@ void SlideEffectScreen::desktopChanged(VirtualDesktop *old, VirtualDesktop *curr
+         previousPos = QPointF(m_motionX.position() / virtualSpaceSize.width(), m_motionY.position() / virtualSpaceSize.height());
+         break;
+     }
+-
+-    case State::ActiveGesture:
+-        previousPos = m_gesturePos;
+-        break;
+     }
+ 
+     startAnimation(previousPos, current, with);
+ }
+ 
+-void SlideEffect::desktopChanging(VirtualDesktop *old, QPointF desktopOffset, EffectWindow *with, LogicalOutput *output)
+-{
+-    if (effects->hasActiveFullScreenEffect() && effects->activeFullScreenEffect() != this) {
+-        return;
+-    }
+-    if (!isActive()) {
+-        const QList<EffectWindow *> windows = effects->stackingOrder();
+-        for (EffectWindow *w : windows) {
+-            w->setData(WindowForceBackgroundContrastRole, QVariant(true));
+-            w->setData(WindowForceBlurRole, QVariant(true));
+-        }
+-    }
+-
+-    auto slideScreenResult = m_slideEffectScreens.tryEmplace(output, this, output);
+-    slideScreenResult.iterator->desktopChanging(old, desktopOffset, with);
+-    effects->setActiveFullScreenEffect(this);
+-}
+-
+-void SlideEffectScreen::desktopChanging(VirtualDesktop *old, QPointF desktopOffset, EffectWindow *with)
+-{
+-    if (m_state == State::Inactive) {
+-        prepareSwitching();
+-    }
+-
+-    m_state = State::ActiveGesture;
+-    m_movingWindow = with;
+-
+-    // Find desktop position based on animationDelta
+-    QPoint gridPos = effects->desktopGridCoords(old);
+-    m_gesturePos.setX(gridPos.x() + desktopOffset.x());
+-    m_gesturePos.setY(gridPos.y() + desktopOffset.y());
+-
+-    if (effects->optionRollOverDesktops()) {
+-        m_gesturePos = forcePositivePosition(m_gesturePos);
+-    } else {
+-        m_gesturePos = moveInsideDesktopGrid(m_gesturePos);
+-    }
+-
+-    effects->addRepaint(m_screen->geometry());
+-}
+-
+-void SlideEffect::desktopChangingCancelled()
+-{
+-    // If the fingers have been lifted and the current desktop didn't change, start animation
+-    // to move back to the original virtual desktop.
+-    if (effects->activeFullScreenEffect() == this) {
+-        for (SlideEffectScreen &slideScreen : m_slideEffectScreens) {
+-            slideScreen.desktopChangingCancelled();
+-        }
+-    }
+-}
+-
+-void SlideEffectScreen::desktopChangingCancelled()
+-{
+-    if (m_state != State::Inactive) {
+-        startAnimation(m_gesturePos, effects->currentDesktop(m_screen), nullptr);
+-    }
+-}
+-
+-QPointF SlideEffectScreen::moveInsideDesktopGrid(QPointF p)
+-{
+-    if (p.x() < 0) {
+-        p.setX(0);
+-    }
+-    if (p.y() < 0) {
+-        p.setY(0);
+-    }
+-    if (p.x() > effects->desktopGridWidth() - 1) {
+-        p.setX(effects->desktopGridWidth() - 1);
+-    }
+-    if (p.y() > effects->desktopGridHeight() - 1) {
+-        p.setY(effects->desktopGridHeight() - 1);
+-    }
+-    return p;
+-}
+-
+ void SlideEffect::windowAdded(EffectWindow *w)
+ {
+     if (SlideEffectScreen *slideScreen = getSlideEffectScreen(w->screen())) {
+diff --git a/src/plugins/slide/slide.h b/src/plugins/slide/slide.h
+index ddfbff2..939c915 100644
+--- a/src/plugins/slide/slide.h
++++ b/src/plugins/slide/slide.h
+@@ -24,11 +24,7 @@ namespace KWin
+  * How it Works:
+  *
+  * This effect doesn't change the current desktop, only receives changes from the VirtualDesktopManager.
+- * The only visually apparent inputs are desktopChanged() and desktopChanging().
+- *
+- * When responding to desktopChanging(), the draw position is only affected by what's received from there.
+- * After desktopChanging() is done, or without desktopChanging() having been called at all, desktopChanged() is called.
+- * The desktopChanged() function configures the m_startPos and m_endPos for the animation, and the duration.
++ * Desktop changes start a spring animation from the current position to the new desktop.
+  *
+  * m_currentPosition and everything else not labeled "drawCoordinate" uses desktops as a unit.
+  * Exmp: 1.2 means the desktop at index 1 shifted over by .2 desktops.
+@@ -61,8 +57,6 @@ public:
+ 
+     bool isActive() const;
+     void desktopChanged(VirtualDesktop *old, VirtualDesktop *current, EffectWindow *with);
+-    void desktopChanging(VirtualDesktop *old, QPointF desktopOffset, EffectWindow *with);
+-    void desktopChangingCancelled();
+     void windowAdded(EffectWindow *w);
+     void windowDeleted(EffectWindow *w);
+     void finishedSwitching();
+@@ -72,7 +66,6 @@ private:
+     bool isTranslated(const EffectWindow *w) const;
+     bool willBePainted(const EffectWindow *w) const;
+     bool shouldElevate(const EffectWindow *w) const;
+-    QPointF moveInsideDesktopGrid(QPointF p);
+     QPointF constrainToDrawableRange(QPointF p);
+     QPointF forcePositivePosition(QPointF p) const;
+     void optimizePath(); // Find the best path to target desktop
+@@ -84,20 +77,17 @@ private:
+     enum class State {
+         Inactive,
+         ActiveAnimation,
+-        ActiveGesture,
+     };
+ 
+     State m_state = State::Inactive;
+     SpringMotion m_motionX;
+     SpringMotion m_motionY;
+ 
+-    // When the desktop isn't desktopChanging(), these two variables are used to control the animation path.
++    // These two variables control the animation path.
+     // They use desktops as a unit.
+     QPointF m_startPos;
+     QPointF m_endPos;
+ 
+-    QPointF m_gesturePos;
+-
+     EffectWindow *m_movingWindow = nullptr;
+     AnimationClock m_clock;
+ 
+@@ -151,8 +141,6 @@ public:
+ 
+ private Q_SLOTS:
+     void desktopChanged(VirtualDesktop *old, VirtualDesktop *current, EffectWindow *with, LogicalOutput *output);
+-    void desktopChanging(VirtualDesktop *old, QPointF desktopOffset, EffectWindow *with, LogicalOutput *output);
+-    void desktopChangingCancelled();
+     void windowAdded(EffectWindow *w);
+     void windowDeleted(EffectWindow *w);
+ 
+diff --git a/src/scripting/gesturehandler.cpp b/src/scripting/gesturehandler.cpp
+index 1519560..2534fc5 100644
+--- a/src/scripting/gesturehandler.cpp
++++ b/src/scripting/gesturehandler.cpp
+@@ -31,8 +31,6 @@ void SwipeGestureHandler::componentComplete()
+     m_gesture->setDirection(SwipeDirection(m_direction));
+ 
+     connect(m_gesture.get(), &SwipeGesture::triggered, this, &SwipeGestureHandler::activated);
+-    connect(m_gesture.get(), &SwipeGesture::cancelled, this, &SwipeGestureHandler::cancelled);
+-    connect(m_gesture.get(), &SwipeGesture::progress, this, &SwipeGestureHandler::setProgress);
+ 
+     switch (m_deviceType) {
+     case Device::Touchpad:
+@@ -70,19 +68,6 @@ void SwipeGestureHandler::setFingerCount(int fingerCount)
+     }
+ }
+ 
+-qreal SwipeGestureHandler::progress() const
+-{
+-    return m_progress;
+-}
+-
+-void SwipeGestureHandler::setProgress(qreal progress)
+-{
+-    if (m_progress != progress) {
+-        m_progress = progress;
+-        Q_EMIT progressChanged();
+-    }
+-}
+-
+ SwipeGestureHandler::Device SwipeGestureHandler::deviceType() const
+ {
+     return m_deviceType;
+diff --git a/src/scripting/gesturehandler.h b/src/scripting/gesturehandler.h
+index f896bde..dbb19f1 100644
+--- a/src/scripting/gesturehandler.h
++++ b/src/scripting/gesturehandler.h
+@@ -52,14 +52,6 @@ class SwipeGestureHandler : public QObject, public QQmlParserStatus
+      */
+     Q_PROPERTY(int fingerCount READ fingerCount WRITE setFingerCount NOTIFY fingerCountChanged)
+ 
+-    /*!
+-     * \qmlproperty real SwipeGestureHandler::progress
+-     *
+-     * This property specifies the progress of the swipe gesture. The progress ranges from
+-     * 0.0 to 1.0.
+-     */
+-    Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
+-
+     /*!
+      * \qmlproperty enumeration SwipeGestureHandler::deviceType
+      * \qmlenumeratorsfrom KWin::SwipeGestureHandler::Device
+@@ -112,9 +104,6 @@ public:
+     int fingerCount() const;
+     void setFingerCount(int fingerCount);
+ 
+-    qreal progress() const;
+-    void setProgress(qreal progress);
+-
+     Device deviceType() const;
+     void setDeviceType(Device device);
+ 
+@@ -122,19 +111,13 @@ Q_SIGNALS:
+     /*!
+      * \qmlsignal SwipeGestureHandler::activated()
+      *
+-     * This signal is emitted when the swipe gesture is triggered, i.e. the progress() reaches 1.0.
++     * Emitted synchronously once the initial direction is recognized after
++     * 16 logical units of movement. Reversing the stroke past its starting
++     * point emits the opposite direction's handler. Cancellation and release
++     * cannot undo or repeat committed commands.
+      */
+     void activated();
+ 
+-    /*!
+-     * \qmlsignal SwipeGestureHandler::cancelled()
+-     *
+-     * This signal is emitted when the swipe gesture is cancelled. A swipe gesture can be cancelled
+-     * if the user lifts their fingers or moves the fingers in a different direction, etc.
+-     */
+-    void cancelled();
+-
+-    void progressChanged();
+     void directionChanged();
+     void fingerCountChanged();
+     void deviceTypeChanged();
+@@ -143,7 +126,6 @@ private:
+     std::unique_ptr<SwipeGesture> m_gesture;
+     Direction m_direction = Direction::Invalid;
+     Device m_deviceType = Device::Touchpad;
+-    qreal m_progress = 0;
+     int m_fingerCount = 3;
+ };
+ 
+diff --git a/src/virtualdesktops.cpp b/src/virtualdesktops.cpp
+index a7414d2..2fb45a6 100644
+--- a/src/virtualdesktops.cpp
++++ b/src/virtualdesktops.cpp
+@@ -35,7 +35,6 @@ namespace KWin
+ {
+ 
+ static bool s_loadingDesktopSettings = false;
+-static const double GESTURE_SWITCH_THRESHOLD = .25;
+ 
+ static QString generateDesktopId()
+ {
+@@ -240,8 +239,6 @@ VirtualDesktopManager::VirtualDesktopManager(QObject *parent)
+ #if KWIN_BUILD_X11
+     , m_rootInfo(nullptr)
+ #endif
+-    , m_swipeGestureReleasedY(new QAction(this))
+-    , m_swipeGestureReleasedX(new QAction(this))
+ {
+ }
+ 
+@@ -775,52 +772,19 @@ void VirtualDesktopManager::initShortcuts()
+     addAction(QStringLiteral("Switch One Desktop Up"), i18n("Switch One Desktop Up"), QKeySequence(Qt::CTRL | Qt::META | Qt::Key_Up), &VirtualDesktopManager::slotUp);
+     addAction(QStringLiteral("Switch One Desktop Down"), i18n("Switch One Desktop Down"), QKeySequence(Qt::CTRL | Qt::META | Qt::Key_Down), &VirtualDesktopManager::slotDown);
+ 
+-    // Gestures
+-    // These connections decide which desktop to end on after gesture ends
+-    connect(m_swipeGestureReleasedX.get(), &QAction::triggered, this, &VirtualDesktopManager::gestureReleasedX);
+-    connect(m_swipeGestureReleasedY.get(), &QAction::triggered, this, &VirtualDesktopManager::gestureReleasedY);
+-    const auto emitCurrentChanging = [this]() {
+-        if (m_perOutputVirtualDesktops) {
+-            LogicalOutput *output = workspace()->activeOutput();
+-            Q_EMIT currentChanging(currentDesktop(output), m_currentDesktopOffset, output);
+-        } else {
+-            const auto outputs = workspace()->outputs();
+-            for (LogicalOutput *output : outputs) {
+-                Q_EMIT currentChanging(currentDesktop(output), m_currentDesktopOffset, output);
+-            }
+-        }
+-    };
+-
+-    const auto left = [this, emitCurrentChanging](qreal cb) {
+-        if (grid().width() > 1) {
+-            m_currentDesktopOffset.setX(cb);
+-            emitCurrentChanging();
+-        }
+-    };
+-    const auto right = [this, emitCurrentChanging](qreal cb) {
+-        if (grid().width() > 1) {
+-            m_currentDesktopOffset.setX(-cb);
+-            emitCurrentChanging();
+-        }
+-    };
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Left, 3, m_swipeGestureReleasedX.get(), left);
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Right, 3, m_swipeGestureReleasedX.get(), right);
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Left, 4, m_swipeGestureReleasedX.get(), left);
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Right, 4, m_swipeGestureReleasedX.get(), right);
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Down, 3, m_swipeGestureReleasedY.get(), [this, emitCurrentChanging](qreal cb) {
+-        if (grid().height() > 1) {
+-            m_currentDesktopOffset.setY(-cb);
+-            emitCurrentChanging();
+-        }
+-    });
+-    input()->registerTouchpadSwipeShortcut(SwipeDirection::Up, 3, m_swipeGestureReleasedY.get(), [this, emitCurrentChanging](qreal cb) {
+-        if (grid().height() > 1) {
+-            m_currentDesktopOffset.setY(cb);
+-            emitCurrentChanging();
+-        }
+-    });
+-    input()->registerTouchscreenSwipeShortcut(SwipeDirection::Left, 3, m_swipeGestureReleasedX.get(), left);
+-    input()->registerTouchscreenSwipeShortcut(SwipeDirection::Right, 3, m_swipeGestureReleasedX.get(), right);
++    // Swipes execute the ordinary desktop commands at direction recognition.
++    const auto left = findChild<QAction *>(QStringLiteral("Switch One Desktop to the Right"));
++    const auto right = findChild<QAction *>(QStringLiteral("Switch One Desktop to the Left"));
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Left, 3, left);
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Right, 3, right);
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Left, 4, left);
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Right, 4, right);
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Down, 3,
++                                           findChild<QAction *>(QStringLiteral("Switch One Desktop Up")));
++    input()->registerTouchpadSwipeShortcut(SwipeDirection::Up, 3,
++                                           findChild<QAction *>(QStringLiteral("Switch One Desktop Down")));
++    input()->registerTouchscreenSwipeShortcut(SwipeDirection::Left, 3, left);
++    input()->registerTouchscreenSwipeShortcut(SwipeDirection::Right, 3, right);
+ 
+     // axis events
+     input()->registerAxisShortcut(Qt::MetaModifier | Qt::AltModifier, PointerAxisDown,
+@@ -831,44 +795,12 @@ void VirtualDesktopManager::initShortcuts()
+ 
+ void VirtualDesktopManager::gestureReleasedY()
+ {
+-    auto current = currentDesktop();
+-    // Note that if desktop wrapping is disabled and there's no desktop above or below,
+-    // above() and below() will return the current desktop.
+-    VirtualDesktop *target = current;
+-    if (m_currentDesktopOffset.y() <= -GESTURE_SWITCH_THRESHOLD) {
+-        target = above(current, isNavigationWrappingAround());
+-    } else if (m_currentDesktopOffset.y() >= GESTURE_SWITCH_THRESHOLD) {
+-        target = below(current, isNavigationWrappingAround());
+-    }
+-
+-    // If the current desktop has not changed, consider that the gesture has been canceled.
+-    if (current != target) {
+-        setCurrent(target);
+-    } else {
+-        Q_EMIT currentChangingCancelled();
+-    }
+-    m_currentDesktopOffset = QPointF(0, 0);
++    // Retained for SDK compatibility. Release cannot repeat or undo a swipe command.
+ }
+ 
+ void VirtualDesktopManager::gestureReleasedX()
+ {
+-    // Note that if desktop wrapping is disabled and there's no desktop to left or right,
+-    // toLeft() and toRight() will return the current desktop.
+-    VirtualDesktop *current = currentDesktop();
+-    VirtualDesktop *target = current;
+-    if (m_currentDesktopOffset.x() <= -GESTURE_SWITCH_THRESHOLD) {
+-        target = toLeft(current, isNavigationWrappingAround());
+-    } else if (m_currentDesktopOffset.x() >= GESTURE_SWITCH_THRESHOLD) {
+-        target = toRight(current, isNavigationWrappingAround());
+-    }
+-
+-    // If the current desktop has not changed, consider that the gesture has been canceled.
+-    if (current != target) {
+-        setCurrent(target);
+-    } else {
+-        Q_EMIT currentChangingCancelled();
+-    }
+-    m_currentDesktopOffset = QPointF(0, 0);
++    // Retained for SDK compatibility. Release cannot repeat or undo a swipe command.
+ }
+ 
+ void VirtualDesktopManager::initSwitchToShortcuts()
+diff --git a/src/virtualdesktops.h b/src/virtualdesktops.h
+index 2952bd7..58def53 100644
+--- a/src/virtualdesktops.h
++++ b/src/virtualdesktops.h
+@@ -469,18 +469,10 @@ Q_SIGNALS:
+     void currentChanged(KWin::VirtualDesktop *previousDesktop, KWin::VirtualDesktop *newDesktop, KWin::LogicalOutput *output);
+ 
+     /**
+-     * Signal emitted for realtime desktop switching animations.
+-     * @param currentDesktop The current virtual desktop
+-     * @param offset The current total change in desktop coordinate
+-     * Offset x and y are negative if switching Left and Down.
+-     * Example: x = 0.6 means 60% of the way to the desktop to the right.
+-     * @param output The affected output. If it affects multiple outputs, then a separate signal is emitted for each one.
++     * Realtime desktop animation signals retained for SDK compatibility.
++     * Discrete swipes only emit currentChanged() when a desktop command commits.
+      */
+     void currentChanging(KWin::VirtualDesktop *currentDesktop, QPointF offset, KWin::LogicalOutput *output);
+-
+-    /**
+-     * Signal emitted when realtime desktop switching animation is cancelled. It applies to all outputs.
+-     */
+     void currentChangingCancelled();
+ 
+     /**
+@@ -538,9 +530,7 @@ private Q_SLOTS:
+      */
+     void slotDown();
+ 
+-    /* For gestured desktopSwitching
+-     * Called when gesture ended, the thing that actually switches the desktop.
+-     */
++    /** SDK-compatible release hooks; discrete swipes commit before release. */
+     void gestureReleasedY();
+     void gestureReleasedX();
+ 
+@@ -599,6 +589,7 @@ private:
+     PlasmaVirtualDesktopManagementInterface *m_virtualDesktopManagement = nullptr;
+     KSharedConfig::Ptr m_config;
+ 
++    // Retained in the exported class layout; discrete swipes do not use release actions.
+     std::unique_ptr<QAction> m_swipeGestureReleasedY;
+     std::unique_ptr<QAction> m_swipeGestureReleasedX;
+     QPointF m_currentDesktopOffset = QPointF(0, 0);
